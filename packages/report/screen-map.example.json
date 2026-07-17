@@ -1,0 +1,8 @@
+{
+  "onboarding/welcome": "onboarding_splash_welcome",
+  "onboarding/goal": "onboarding_goal_picker",
+  "onboarding/notifications": "onboarding_push_optin",
+  "home": "home_dashboard",
+  "lesson/intro": "lesson_intro",
+  "lesson/complete": "1b2f3c4d-5e6f-7081-92a3-b4c5d6e7f809"
+}

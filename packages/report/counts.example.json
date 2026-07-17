@@ -1,0 +1,34 @@
+{
+  "date_range": "Last 28 days",
+  "screens": {
+    "onboarding/welcome": { "users": 8420, "events": 9105 },
+    "onboarding/goal": { "users": 7240, "events": 7580 },
+    "onboarding/notifications": { "users": 6110, "events": 6240 },
+    "home": { "users": 4890, "events": 16320 },
+    "lesson/intro": { "users": 3610, "events": 5170 },
+    "lesson/complete": { "users": 2950, "events": 3115 },
+    "settings": { "users": 860, "events": 1410 },
+    "profile": { "users": 540, "events": 720 }
+  },
+  "transitions": [
+    { "src": "onboarding/welcome", "dst": "onboarding/goal", "users": 7240 },
+    { "src": "onboarding/goal", "dst": "onboarding/notifications", "users": 6110 },
+    { "src": "onboarding/notifications", "dst": "home", "users": 4890 },
+    { "src": "home", "dst": "lesson/intro", "users": 3610 },
+    { "src": "lesson/intro", "dst": "lesson/complete", "users": 2950 },
+    { "src": "lesson/complete", "dst": "home", "users": 2380 },
+    { "src": "home", "dst": "settings", "users": 860 },
+    { "src": "settings", "dst": "profile", "users": 540 },
+    { "src": "profile", "dst": "settings", "users": 310 }
+  ],
+  "leavers": {
+    "onboarding/welcome": 7240,
+    "onboarding/goal": 6110,
+    "onboarding/notifications": 4890,
+    "home": 4210,
+    "lesson/intro": 2950,
+    "lesson/complete": 2380,
+    "settings": 540,
+    "profile": 310
+  }
+}

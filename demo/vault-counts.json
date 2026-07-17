@@ -1,0 +1,35 @@
+{
+  "_note": "Real per-screen unique users (count(DISTINCT person_id), last 24h) for the Vault KYC onboarding funnel, seeded through the @revyl/atlas-analytics SDK into PostHog project App (111361), atlas_app_id = Vault. Onboarding is strictly linear, so transitions/leavers are the next-step reach.",
+  "date_range": "Last 24 hours",
+  "screens": {
+    "/onboarding/welcome": { "users": 1892, "events": 1892 },
+    "/onboarding/email": { "users": 1637, "events": 1637 },
+    "/onboarding/phone": { "users": 1416, "events": 1416 },
+    "/onboarding/verify": { "users": 1074, "events": 1074 },
+    "/onboarding/address": { "users": 909, "events": 909 },
+    "/onboarding/id": { "users": 581, "events": 581 },
+    "/onboarding/face-scan": { "users": 316, "events": 316 },
+    "/onboarding/approved": { "users": 254, "events": 254 },
+    "/home": { "users": 250, "events": 250 }
+  },
+  "transitions": [
+    { "src": "/onboarding/welcome", "dst": "/onboarding/email", "users": 1637 },
+    { "src": "/onboarding/email", "dst": "/onboarding/phone", "users": 1416 },
+    { "src": "/onboarding/phone", "dst": "/onboarding/verify", "users": 1074 },
+    { "src": "/onboarding/verify", "dst": "/onboarding/address", "users": 909 },
+    { "src": "/onboarding/address", "dst": "/onboarding/id", "users": 581 },
+    { "src": "/onboarding/id", "dst": "/onboarding/face-scan", "users": 316 },
+    { "src": "/onboarding/face-scan", "dst": "/onboarding/approved", "users": 254 },
+    { "src": "/onboarding/approved", "dst": "/home", "users": 250 }
+  ],
+  "leavers": {
+    "/onboarding/welcome": 1637,
+    "/onboarding/email": 1416,
+    "/onboarding/phone": 1074,
+    "/onboarding/verify": 909,
+    "/onboarding/address": 581,
+    "/onboarding/id": 316,
+    "/onboarding/face-scan": 254,
+    "/onboarding/approved": 250
+  }
+}

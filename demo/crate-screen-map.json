@@ -1,0 +1,9 @@
+{
+  "/": "storefront_home_feed",
+  "/collection": "product_listing_collection",
+  "/product/[id]": "product_detail",
+  "/checkout": "checkout_form",
+  "/order/confirmed": "order_confirmation",
+  "/bag": "shopping_bag",
+  "/account": "account_hub"
+}

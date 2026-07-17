@@ -1,0 +1,23 @@
+{
+  "name": "atlas-dropoff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "See exactly where users drop off in your app — painted on your real screens. A tiny Expo/RN SDK + a report CLI, built on Revyl Atlas + PostHog.",
+  "homepage": "https://github.com/ethanzhoucool/atlas-dropoff",
+  "repository": "https://github.com/ethanzhoucool/atlas-dropoff",
+  "license": "MIT",
+  "author": "Revyl (https://revyl.com)",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "report": "node packages/report/dist/cli.js",
+    "demo:seed": "node demo/seed-crate.cjs",
+    "demo:report": "node packages/report/dist/cli.js generate --app cda16afc-2b9c-4042-a0c2-d863dc3c9ec6 --counts demo/crate-counts.json --screen-map demo/crate-screen-map.json --atlas-cache demo/.atlas-cache/crate --out demo/crate-report.html"
+  }
+}

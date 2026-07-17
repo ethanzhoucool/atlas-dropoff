@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["ES2019", "DOM"],
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "jsx": "react",
+    "strict": true,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    // Hermetic build: peer-dep shapes come from src/types.d.ts, so the package
+    // typechecks and builds with no node_modules present. Keep @types out.
+    "types": [],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmitOnError": true
+  },
+  "include": ["src"]
+}

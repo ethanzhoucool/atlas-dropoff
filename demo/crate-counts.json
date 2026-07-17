@@ -1,0 +1,27 @@
+{
+  "_note": "Real PostHog counts for the Crate checkout funnel, seeded through the @revyl/atlas-analytics SDK into project App (111361). Distinct-user counts (count(DISTINCT person_id)) over the last 24h; leavers = distinct users who left each screen.",
+  "date_range": "Last 24 hours",
+  "screens": {
+    "/": { "users": 1201, "events": 1201 },
+    "/collection": { "users": 790, "events": 790 },
+    "/product/[id]": { "users": 570, "events": 570 },
+    "/checkout": { "users": 240, "events": 240 },
+    "/order/confirmed": { "users": 140, "events": 140 },
+    "/bag": { "users": 130, "events": 130 },
+    "/account": { "users": 70, "events": 70 }
+  },
+  "transitions": [
+    { "src": "/", "dst": "/collection", "users": 790 },
+    { "src": "/collection", "dst": "/product/[id]", "users": 570 },
+    { "src": "/product/[id]", "dst": "/checkout", "users": 240 },
+    { "src": "/checkout", "dst": "/order/confirmed", "users": 140 },
+    { "src": "/", "dst": "/bag", "users": 130 },
+    { "src": "/product/[id]", "dst": "/account", "users": 70 }
+  ],
+  "leavers": {
+    "/": 920,
+    "/collection": 570,
+    "/product/[id]": 310,
+    "/checkout": 140
+  }
+}

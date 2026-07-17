@@ -1,0 +1,4 @@
+interface:
+  display_name: "Atlas Drop-off"
+  short_description: "Integrate the Atlas Drop-off SDK and generate a screen-level drop-off report from your Revyl Atlas map and PostHog events."
+  default_prompt: "Use $atlas-dropoff-analytics to integrate the Atlas Drop-off SDK, build a screen-map, and generate the drop-off report."

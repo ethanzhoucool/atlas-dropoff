@@ -1,0 +1,52 @@
+{
+  "name": "@revyl/atlas-analytics",
+  "version": "0.1.0",
+  "description": "Tiny drop-in screen analytics for Expo & React Native. One provider, auto screen tracking, zero native modules — events shaped for Revyl Atlas drop-off reports.",
+  "keywords": [
+    "react-native",
+    "expo",
+    "expo-router",
+    "react-navigation",
+    "analytics",
+    "screen-tracking",
+    "posthog",
+    "revyl",
+    "atlas"
+  ],
+  "license": "MIT",
+  "author": "Revyl",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/*.test.cjs\""
+  },
+  "peerDependencies": {
+    "@react-native-async-storage/async-storage": ">=1.17.0",
+    "@react-navigation/native": ">=6.0.0",
+    "expo-router": ">=2.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.70.0"
+  },
+  "peerDependenciesMeta": {
+    "@react-native-async-storage/async-storage": {
+      "optional": true
+    },
+    "@react-navigation/native": {
+      "optional": true
+    },
+    "expo-router": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
