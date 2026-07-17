@@ -33,15 +33,30 @@ node packages/report/dist/cli.js generate --app <your-atlas-app-id> --project <p
 
 You get a single self-contained `report.html`: your app's screenshots from Atlas, with user counts and drop-off percentages on every screen transition. Open it and find the leak in your onboarding or checkout.
 
-## Install & build
+## Install (copy-paste, no npm account)
 
-The packages aren't on npm yet. Clone this repo and build once:
+The packages aren't on npm yet, so you install from this repo. Paste this in **your app's root directory**. It clones + builds Atlas Drop-off once, then installs the SDK into your app from a packed tarball:
 
+```sh
+ATLAS_DIR="$HOME/.atlas-dropoff"
+if [ -d "$ATLAS_DIR/.git" ]; then git -C "$ATLAS_DIR" pull -q
+else git clone -q https://github.com/ethanzhoucool/atlas-dropoff.git "$ATLAS_DIR"; fi
+( cd "$ATLAS_DIR" && npm install && npm run build )
+TARBALL="$( cd "$ATLAS_DIR/packages/sdk" && npm pack --silent --pack-destination "$ATLAS_DIR" )"
+npm install "$ATLAS_DIR/$TARBALL"
 ```
-npm install && npm run build
+
+Install from the tarball, not `npm install $ATLAS_DIR/packages/sdk`: a symlink path install pulls a duplicate React from the clone and crashes with "invalid hook call". The tarball ships only the built `dist`.
+
+Then wrap your app root in `<AtlasProvider>` (see the 3-step block above, or `SKILL.md`) and generate the report:
+
+```sh
+node "$ATLAS_DIR/packages/report/dist/cli.js" generate --app <atlas-app-id> --project <posthog-project-id>
 ```
 
-Then install the SDK into your app from this local path (`npm install <path>/packages/sdk`), and run the report with `node <path>/packages/report/dist/cli.js …`. The agent skill (below) does all of this for you.
+**Or let your coding agent do the whole thing.** Paste this to Claude Code or Codex from your app:
+
+> Integrate Atlas Drop-off into this app. Clone https://github.com/ethanzhoucool/atlas-dropoff into ~/.atlas-dropoff and run `npm install && npm run build` in it. Install its SDK into this app from an `npm pack` tarball of ~/.atlas-dropoff/packages/sdk (not a symlink path install — that pulls a duplicate React and crashes). Then follow ~/.atlas-dropoff/SKILL.md to wrap the app root in AtlasProvider with my PostHog key and Revyl Atlas app id, build a screen-map, and generate the drop-off report.
 
 ## Tell your coding agent to set this up for you
 

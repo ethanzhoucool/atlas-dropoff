@@ -48,16 +48,22 @@ Read `$APP/package.json` and the app entry to classify the router:
 - `@react-navigation/native`, no expo-router → **React Navigation** (entry: wherever `NavigationContainer` is rendered, usually `App.tsx`). One-line wire-up, NOT auto-detected.
 - Neither → **plain React Native**: no auto-tracking; call `trackScreen(name)` manually at screen transitions.
 
-## Step 2: Install the SDK (from this local clone)
+## Step 2: Install the SDK (from a tarball, not a symlink path)
 
-Detect the package manager from the app's lockfile and install `@revyl/atlas-analytics` **by path**:
+Do NOT `npm install $REPO/packages/sdk` — a symlink path install pulls a duplicate React from the clone's `node_modules` and crashes the app with "invalid hook call". Pack a tarball (built `dist` only) and install that. First pack it (in `$REPO`):
+
+```
+TARBALL="$( cd $REPO/packages/sdk && npm pack --silent --pack-destination $REPO )"
+```
+
+Then install the tarball into `$APP` with the app's package manager (detect from the lockfile):
 
 | Lockfile | Command (run in `$APP`) |
 | --- | --- |
-| `bun.lockb` / `bun.lock` | `bun add $REPO/packages/sdk` |
-| `pnpm-lock.yaml` | `pnpm add $REPO/packages/sdk` |
-| `yarn.lock` | `yarn add $REPO/packages/sdk` |
-| `package-lock.json` / none | `npm install $REPO/packages/sdk` |
+| `bun.lockb` / `bun.lock` | `bun add $REPO/$TARBALL` |
+| `pnpm-lock.yaml` | `pnpm add $REPO/$TARBALL` |
+| `yarn.lock` | `yarn add $REPO/$TARBALL` |
+| `package-lock.json` / none | `npm install $REPO/$TARBALL` |
 
 ## Step 3: Wire AtlasProvider at the app root
 

@@ -33,7 +33,7 @@ Confirm these prerequisites; stop with a clear message if any is missing:
 
 **1. Identify the router.** Read `$APP/package.json` and the app entry. `expo-router` + an `app/` directory → Expo Router (entry `app/_layout.tsx`, auto-tracked). `@react-navigation/native` without expo-router → React Navigation (entry: the file rendering `NavigationContainer`), a one-line wire-up, not auto-detected. Neither → plain React Native, add manual `trackScreen(name)` calls.
 
-**2. Install the SDK by local path** with the package manager the lockfile implies (run in `$APP`): `bun add $REPO/packages/sdk`, `pnpm add $REPO/packages/sdk`, `yarn add $REPO/packages/sdk`, or `npm install $REPO/packages/sdk`.
+**2. Install the SDK from a tarball, not a symlink path.** A `$REPO/packages/sdk` path install pulls a duplicate React and crashes the app ("invalid hook call"). Pack the built `dist` and install that: `TARBALL="$( cd $REPO/packages/sdk && npm pack --silent --pack-destination $REPO )"`, then install `$REPO/$TARBALL` into `$APP` with the package manager the lockfile implies (`bun add`, `pnpm add`, `yarn add`, or `npm install`).
 
 **3. Wire the provider at the app root.** Add `EXPO_PUBLIC_POSTHOG_KEY=phc_...` to `$APP/.env` (never hardcode). Use the Atlas app **UUID** (from `revyl atlas apps`) as `atlasAppId`: the report joins on this id, so the app name won't match.
 
