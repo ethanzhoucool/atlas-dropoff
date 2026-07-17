@@ -56,7 +56,7 @@ node "$ATLAS_DIR/packages/report/dist/cli.js" generate --app <atlas-app-id> --pr
 
 **Or let your coding agent do the whole thing.** Paste this to Claude Code or Codex from your app:
 
-> Integrate Atlas Drop-off into this app. Clone https://github.com/ethanzhoucool/atlas-dropoff into ~/.atlas-dropoff and run `npm install && npm run build` in it. Install its SDK into this app from an `npm pack` tarball of ~/.atlas-dropoff/packages/sdk (not a symlink path install — that pulls a duplicate React and crashes). Then follow ~/.atlas-dropoff/SKILL.md to wrap the app root in AtlasProvider with my PostHog key and Revyl Atlas app id, build a screen-map, and generate the drop-off report.
+> Integrate Atlas Drop-off into this app. Clone https://github.com/ethanzhoucool/atlas-dropoff into ~/.atlas-dropoff and run `npm install && npm run build` in it. Install its SDK into this app from an `npm pack` tarball of ~/.atlas-dropoff/packages/sdk (not a symlink path install, which pulls a duplicate React and crashes). Then follow ~/.atlas-dropoff/SKILL.md to wrap the app root in AtlasProvider with my PostHog key and Revyl Atlas app id, build a screen-map, and generate the drop-off report.
 
 ## Tell your coding agent to set this up for you
 

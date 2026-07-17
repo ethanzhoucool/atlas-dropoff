@@ -50,7 +50,7 @@ Read `$APP/package.json` and the app entry to classify the router:
 
 ## Step 2: Install the SDK (from a tarball, not a symlink path)
 
-Do NOT `npm install $REPO/packages/sdk` — a symlink path install pulls a duplicate React from the clone's `node_modules` and crashes the app with "invalid hook call". Pack a tarball (built `dist` only) and install that. First pack it (in `$REPO`):
+Do NOT `npm install $REPO/packages/sdk`: a symlink path install pulls a duplicate React from the clone's `node_modules` and crashes the app with "invalid hook call". Pack a tarball (built `dist` only) and install that. First pack it (in `$REPO`):
 
 ```
 TARBALL="$( cd $REPO/packages/sdk && npm pack --silent --pack-destination $REPO )"
