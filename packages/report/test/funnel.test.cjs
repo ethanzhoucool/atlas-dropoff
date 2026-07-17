@@ -221,6 +221,49 @@ test('empty leavers:{} falls back to transition sums instead of forcing 100% exi
   assert.notEqual(analytics.screens.A.exit_rate, 1);
 });
 
+/* ── sequential cohort override (live windowFunnel) ─────────── */
+
+test('sequentialCohort override replaces the min-cohort estimate', async () => {
+  const { mapScreens } = await mapP;
+  const { buildNodeTransitions, computeAnalytics, buildFunnelPath, nodeUsersFromCounts } = await funnelP;
+  const atlas = makeAtlas(
+    [makeNode('A', { is_entry_point: true }), makeNode('B'), makeNode('C')],
+    [makeEdge('A', 'B'), makeEdge('B', 'C')],
+  );
+  const counts = {
+    source: 'posthog',
+    screens: {
+      A: { users: 1000, events: 1000 },
+      B: { users: 800, events: 800 },
+      C: { users: 700, events: 700 },
+    },
+    transitions: [
+      { src: 'A', dst: 'B', users: 600 },
+      { src: 'B', dst: 'C', users: 650 },
+    ],
+  };
+  const mapping = mapScreens(counts, atlas, {});
+  const transitions = buildNodeTransitions(counts, mapping);
+  const { users } = nodeUsersFromCounts(counts, mapping);
+  const byId = new Map(atlas.nodes.map(n => [n.id, n]));
+  const path = buildFunnelPath(atlas, byId, users, transitions);
+  assert.deepEqual(path, ['A', 'B', 'C']);
+
+  // The exact sequential funnel (from windowFunnel) must override the
+  // min-cohort estimate, which alone would give [1000, 600, 600].
+  const analytics = computeAnalytics(atlas, counts, mapping, transitions, {
+    dateRange: 'w',
+    disclaimer: 'sequential',
+    path,
+    sequentialCohort: [900, 400, 300],
+  });
+  assert.deepEqual(analytics.funnel.map(s => s.users), [900, 400, 300]);
+  assert.equal(analytics.totals.sessions, 900);
+  assert.equal(analytics.totals.converted, 300);
+  // per-screen viewer totals are still the raw counts, not the cohort
+  assert.equal(analytics.screens.B.users, 800);
+});
+
 /* ── duplicate-name collision warning (map.ts) ──────────────── */
 
 test('mapScreens warns when two Atlas nodes normalize to the same name key', async () => {

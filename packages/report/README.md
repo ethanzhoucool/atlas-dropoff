@@ -47,6 +47,8 @@ atlas-report generate --app <atlas-app-id-or-name> [options]
   --host <url>          PostHog query API host (default: $POSTHOG_HOST or https://us.posthog.com)
   --days <n>            Lookback window in days, 1-3650 (default: 28)
   --timeout <s>         PostHog query timeout in seconds (default: 60)
+  --funnel-window <s>   Sequential-funnel conversion window in seconds
+                        (live mode; default: the full lookback, days*86400)
   --screen-map <file>   JSON map of PostHog screen keys -> Atlas node id/name
   --out <file>          Output HTML path (default: atlas-dropoff-report.html)
   --atlas-cache <dir>   Atlas graph + screenshot cache (default: .atlas-cache/<app>)
@@ -206,12 +208,20 @@ Unmatched keys never crash the run. They simply carry no data.
   exceed step 1. Busiest overall is also used when Atlas marked no entry points.
 - **Path**: from each screen, follow the highest-volume observed transition to an
   unvisited screen with data; stop at a terminal screen or a dead end.
-- **Drop-off**: step-to-step conversion uses the observed transition
-  count (distinct users who traversed `step_{i-1} → step_i`) whenever that
-  transition has data; the population ratio `users_i / users_{i-1}` is only a
-  fallback. `lost` is the previous step's users minus the traversers. Per-screen
-  `exit_rate` uses the leavers counts (`1 − leavers/users`) when available, and
-  "where they go next" shares come from the per-destination transitions.
+- **Conversion (end-to-end and per step)**: driven by a monotone funnel cohort.
+  - Live mode runs a real **sequential funnel** (HogQL `windowFunnel`) over the
+    discovered path: distinct persons who completed the first *k* steps in order,
+    where each step matches any screen key mapped to that node (so aliases dedupe
+    by `person_id`). This is exact. `--funnel-window` sets how long the ordered
+    sequence may span (default: the full lookback).
+  - Offline `--counts` mode has no per-user data, so it estimates the cohort with
+    `cohort[i] = min(cohort[i-1], transition_i)` (falling back to the step's
+    viewers when a transition is missing). Monotone by construction, and an upper
+    bound on true traversal.
+  - `lost` is the previous cohort minus the current one. Per-screen `exit_rate`
+    uses the leavers counts (`1 − leavers/users`) when available; "where they go
+    next" shares come from the per-destination transitions. Per-screen viewer
+    totals (everyone who saw a screen, by any path) still drive the flow map.
 - **Off-funnel screens** with traffic appear as smaller side nodes anchored to the
   funnel screen they exchange the most users with.
 

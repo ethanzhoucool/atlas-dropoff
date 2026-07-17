@@ -103,7 +103,54 @@ export function leaversQuery(days: number): string {
   ].join('\n');
 }
 
-async function runHogQL(opts: PostHogOptions, sql: string): Promise<unknown[][]> {
+/** windowFunnel caps at 32 ordered step conditions. */
+export const FUNNEL_MAX_STEPS = 32;
+
+/**
+ * A real sequential funnel: for an ordered list of step key-sets, count how
+ * many DISTINCT persons completed the first k steps IN ORDER (k = 1..N), using
+ * ClickHouse/HogQL `windowFunnel`. Each step matches any of the screen keys
+ * mapped to that Atlas node, so a person seen under two aliases is counted once
+ * (this also makes many-to-one exact for the funnel). Step key arrays are bound
+ * as `values` ({step0}, {step1}, …), never spliced into SQL. Returns one row of
+ * N counts (s1..sN); the outer aggregate is a single row, so no LIMIT applies.
+ */
+export function funnelQuery(days: number, windowSeconds: number, stepCount: number): string {
+  assertDays(days);
+  if (!Number.isInteger(windowSeconds) || windowSeconds < 1) {
+    throw new Error(`funnel window must be a positive integer of seconds (got ${windowSeconds}).`);
+  }
+  if (!Number.isInteger(stepCount) || stepCount < 2 || stepCount > FUNNEL_MAX_STEPS) {
+    throw new Error(`sequential funnel needs 2..${FUNNEL_MAX_STEPS} steps (got ${stepCount}).`);
+  }
+  const selects: string[] = [];
+  const conds: string[] = [];
+  for (let k = 0; k < stepCount; k++) {
+    selects.push(`countIf(level >= ${k + 1}) AS s${k + 1}`);
+    conds.push(`      properties.screen IN {step${k}}`);
+  }
+  return [
+    `SELECT ${selects.join(', ')}`,
+    'FROM (',
+    '  SELECT person_id,',
+    `    windowFunnel(${windowSeconds})(`,
+    '      timestamp,',
+    conds.join(',\n'),
+    '    ) AS level',
+    '  FROM events',
+    "  WHERE event = 'atlas_screen'",
+    '    AND properties.atlas_app_id = {app_id}',
+    `    AND timestamp > now() - INTERVAL ${days} DAY`,
+    '  GROUP BY person_id',
+    ')',
+  ].join('\n');
+}
+
+async function runHogQL(
+  opts: PostHogOptions,
+  sql: string,
+  values: Record<string, unknown> = { app_id: opts.appId },
+): Promise<unknown[][]> {
   const url = `${opts.host.replace(/\/+$/, '')}/api/projects/${encodeURIComponent(opts.projectId)}/query/`;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let res: Response;
@@ -118,9 +165,9 @@ async function runHogQL(opts: PostHogOptions, sql: string): Promise<unknown[][]>
         query: {
           kind: 'HogQLQuery',
           query: sql,
-          // Proper parameterization: {app_id} is bound server-side as a
-          // constant, so app ids never get spliced into SQL text.
-          values: { app_id: opts.appId },
+          // Proper parameterization: values (app id, funnel step key arrays)
+          // are bound server-side, never spliced into SQL text.
+          values,
         },
       }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -217,6 +264,30 @@ export async function fetchCounts(opts: PostHogOptions): Promise<Counts> {
   }
 
   return { source: 'posthog', screens, transitions, leavers };
+}
+
+/**
+ * Run the sequential funnel query for an ordered path and return the cohort
+ * [reached-step-1, …, reached-step-N] (distinct persons, monotone
+ * non-increasing). `stepKeys[i]` are the screen keys mapped to the i-th node.
+ */
+export async function fetchFunnel(
+  opts: PostHogOptions,
+  stepKeys: string[][],
+  windowSeconds: number,
+): Promise<number[]> {
+  const n = stepKeys.length;
+  const sql = funnelQuery(opts.days, windowSeconds, n);
+  const values: Record<string, unknown> = { app_id: opts.appId };
+  stepKeys.forEach((keys, i) => { values[`step${i}`] = keys; });
+  const rows = await runHogQL(opts, sql, values);
+  const row = (rows[0] ?? []) as unknown[];
+  const cohort: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const c = toCount(row[i]);
+    cohort.push(i === 0 ? c : Math.min(cohort[i - 1], c));
+  }
+  return cohort;
 }
 
 /* ── offline counts file ────────────────────────────────────── */

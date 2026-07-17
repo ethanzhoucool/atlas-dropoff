@@ -83,9 +83,26 @@ const DATA = {
 };
 
 function classify(sql) {
+  if (/windowFunnel/i.test(sql)) return "funnel";
   if (/AS leavers/i.test(sql)) return "leavers";
   if (/AS dst/i.test(sql)) return "transitions";
   return "screens";
+}
+
+// The sequential funnel query returns one row: distinct persons reaching each
+// ordered step (monotone). The step key-sets come in as values.step0..stepN.
+// For the demo's clean linear seeds this is the per-screen count in path order.
+function funnelResult(data, values) {
+  const usersByKey = {};
+  if (data) for (const [key, users] of data.screens) usersByKey[key] = users;
+  const steps = [];
+  for (let i = 0; values && values[`step${i}`] !== undefined; i++) steps.push(values[`step${i}`]);
+  let running = Infinity;
+  return steps.map((keys) => {
+    const stepUsers = Math.max(0, ...keys.map((k) => usersByKey[k] || 0));
+    running = Math.min(running, stepUsers);
+    return running;
+  });
 }
 
 const port = Number(process.argv[2] || 8799);
@@ -115,11 +132,17 @@ http
         return;
       }
       const sql = parsed?.query?.query || "";
-      const appId = parsed?.query?.values?.app_id;
+      const values = parsed?.query?.values || {};
+      const appId = values.app_id;
       const kind = classify(sql);
       const data = DATA[appId];
-      const results = data ? data[kind] : [];
-      console.error(`[mock-posthog] ${kind.padEnd(11)} app=${String(appId).slice(0, 8)} -> ${results.length} rows`);
+      const results =
+        kind === "funnel"
+          ? [funnelResult(data, values)]
+          : data
+            ? data[kind]
+            : [];
+      console.error(`[mock-posthog] ${kind.padEnd(11)} app=${String(appId).slice(0, 8)} -> ${results.length} row(s)`);
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ results }));
     });
   })

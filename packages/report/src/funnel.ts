@@ -21,6 +21,18 @@ export interface ComputeOptions {
   disclaimer: string;
   /** Warning sink (defaults to stderr) — injectable for tests. */
   warn?: (line: string) => void;
+  /**
+   * Precomputed funnel path (node ids). When set, used instead of running
+   * buildFunnelPath internally — the CLI computes it once so it can run the
+   * sequential funnel query for that exact path.
+   */
+  path?: string[];
+  /**
+   * Exact sequential cohort (distinct persons reaching each step), from a
+   * HogQL windowFunnel query. When set (and aligned to the path), it replaces
+   * the offline min-cohort estimate as the funnel's step counts.
+   */
+  sequentialCohort?: number[];
 }
 
 /* ── small shared helpers ───────────────────────────────────── */
@@ -84,25 +96,19 @@ export function buildNodeTransitions(
   return out;
 }
 
-/* ── main compute ───────────────────────────────────────────── */
-
-export function computeAnalytics(
-  atlas: AtlasGraph,
+/**
+ * Distinct users / raw events per Atlas node, plus the PostHog keys mapped to
+ * each node. When multiple keys map to one node, count(DISTINCT …) values are
+ * NOT additive (one person under two keys would be double-counted by a sum), so
+ * users take the MAX — a guaranteed lower bound on the true distinct union. Raw
+ * event counts ARE additive, so those are summed.
+ * TODO(live mode): the exact fix is to re-query count(DISTINCT person_id) over
+ * the union of keys per node.
+ */
+export function nodeUsersFromCounts(
   counts: Counts,
   mapping: Mapping,
-  transitions: Map<string, Map<string, number>>,
-  opts: ComputeOptions,
-): Analytics {
-  const byId = new Map<string, AtlasNode>(atlas.nodes.map(n => [n.id, n]));
-  const warn = opts.warn ?? ((line: string): void => { process.stderr.write(`${line}\n`); });
-
-  // Distinct users / raw events per Atlas node. When multiple PostHog keys
-  // map to one node, count(DISTINCT …) values are NOT additive (one person
-  // seen under two keys would be double-counted by a sum), so take the MAX —
-  // a guaranteed lower bound on the true distinct union. Raw event counts
-  // ARE additive, so those are still summed.
-  // TODO(live mode): the exact fix is to re-query PostHog with
-  // count(DISTINCT person_id) over the union of keys per node.
+): { users: Map<string, number>; events: Map<string, number>; keysByNode: Map<string, string[]> } {
   const users = new Map<string, number>();
   const events = new Map<string, number>();
   const keysByNode = new Map<string, string[]>();
@@ -115,6 +121,22 @@ export function computeAnalytics(
     if (keys) keys.push(key);
     else keysByNode.set(id, [key]);
   }
+  return { users, events, keysByNode };
+}
+
+/* ── main compute ───────────────────────────────────────────── */
+
+export function computeAnalytics(
+  atlas: AtlasGraph,
+  counts: Counts,
+  mapping: Mapping,
+  transitions: Map<string, Map<string, number>>,
+  opts: ComputeOptions,
+): Analytics {
+  const byId = new Map<string, AtlasNode>(atlas.nodes.map(n => [n.id, n]));
+  const warn = opts.warn ?? ((line: string): void => { process.stderr.write(`${line}\n`); });
+
+  const { users, events, keysByNode } = nodeUsersFromCounts(counts, mapping);
   const multiKeyNodes = [...keysByNode.entries()].filter(([, keys]) => keys.length > 1);
   if (multiKeyNodes.length > 0) {
     warn(`! ${multiKeyNodes.length} Atlas node(s) have multiple PostHog keys mapped — distinct-user`);
@@ -142,7 +164,7 @@ export function computeAnalytics(
     if (better) edgeByPair.set(k, e);
   }
 
-  const path = buildFunnelPath(atlas, byId, users, transitions);
+  const path = opts.path ?? buildFunnelPath(atlas, byId, users, transitions);
   const inFunnel = new Set(path);
   const goalId = path[path.length - 1];
 
@@ -161,11 +183,25 @@ export function computeAnalytics(
      where "everyone who saw this screen" is the right number.
      TODO(live mode): a future upgrade is a real HogQL windowFunnel()
      sequential query for exact end-to-end traversal. */
-  const cohort: number[] = [users.get(path[0]) ?? 0];
-  for (let i = 1; i < path.length; i++) {
-    const transU = transitions.get(path[i - 1])?.get(path[i]);
-    const cap = transU !== undefined && transU > 0 ? transU : users.get(path[i]) ?? 0;
-    cohort.push(Math.min(cohort[i - 1], cap));
+  let cohort: number[];
+  if (opts.sequentialCohort && opts.sequentialCohort.length === path.length) {
+    // Exact sequential funnel from HogQL windowFunnel (live mode): distinct
+    // persons who completed the first i ordered steps. Enforce monotonicity
+    // defensively.
+    cohort = [];
+    for (let i = 0; i < path.length; i++) {
+      const c = Math.max(0, Math.round(opts.sequentialCohort[i]));
+      cohort.push(i === 0 ? c : Math.min(cohort[i - 1], c));
+    }
+  } else {
+    // Offline / fallback: monotone min-cohort estimate over per-step transition
+    // counts (an upper bound on true sequential traversal).
+    cohort = [users.get(path[0]) ?? 0];
+    for (let i = 1; i < path.length; i++) {
+      const transU = transitions.get(path[i - 1])?.get(path[i]);
+      const cap = transU !== undefined && transU > 0 ? transU : users.get(path[i]) ?? 0;
+      cohort.push(Math.min(cohort[i - 1], cap));
+    }
   }
 
   const steps: FunnelStep[] = path.map((id, i) => {
@@ -334,7 +370,7 @@ export function computeAnalytics(
  * file), walk the Atlas structure instead: primary edges first, then by
  * observation count.
  */
-function buildFunnelPath(
+export function buildFunnelPath(
   atlas: AtlasGraph,
   byId: Map<string, AtlasNode>,
   users: Map<string, number>,

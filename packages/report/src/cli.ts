@@ -9,9 +9,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { loadAtlas } from './atlas.js';
-import { buildNodeTransitions, computeAnalytics } from './funnel.js';
+import {
+  buildFunnelPath, buildNodeTransitions, computeAnalytics, nodeUsersFromCounts,
+} from './funnel.js';
 import { mapScreens, printMappingReport } from './map.js';
-import { fetchCounts, loadCountsFile } from './posthog.js';
+import { fetchCounts, fetchFunnel, loadCountsFile, type PostHogOptions } from './posthog.js';
 import { renderReport } from './render.js';
 import type { Counts } from './types.js';
 
@@ -34,6 +36,8 @@ OPTIONS
                         ${DEFAULT_HOST})
   --days <n>            Lookback window in days, 1-3650 (default: 28)
   --timeout <s>         PostHog query timeout in seconds (default: 60)
+  --funnel-window <s>   Sequential-funnel conversion window in seconds
+                        (live mode; default: the full lookback, days*86400)
   --screen-map <file>   JSON map of PostHog screen keys -> Atlas node id/name
   --out <file>          Output HTML path (default: ${DEFAULT_OUT})
   --atlas-cache <dir>   Atlas graph + screenshot cache (default: .atlas-cache/<app>)
@@ -67,6 +71,8 @@ interface CliOptions {
   days: number;
   /** PostHog query timeout in seconds. */
   timeout: number;
+  /** Sequential-funnel window in seconds (live mode); defaults to days*86400. */
+  funnelWindow?: number;
   screenMap?: string;
   out: string;
   atlasCache?: string;
@@ -76,8 +82,8 @@ interface CliOptions {
 }
 
 const VALUE_FLAGS = new Set([
-  '--app', '--project', '--host', '--days', '--timeout', '--screen-map', '--out',
-  '--atlas-cache', '--counts', '--revyl',
+  '--app', '--project', '--host', '--days', '--timeout', '--funnel-window',
+  '--screen-map', '--out', '--atlas-cache', '--counts', '--revyl',
 ]);
 const BOOL_FLAGS = new Set(['--refresh', '-h', '--help', '-v', '--version']);
 
@@ -137,6 +143,14 @@ function parseArgs(argv: string[]): CliOptions {
             fail(`--timeout must be an integer between 1 and 3600 seconds (got "${value}").`);
           }
           opts.timeout = n;
+          break;
+        }
+        case '--funnel-window': {
+          const n = Number(value);
+          if (!Number.isInteger(n) || n < 1) {
+            fail(`--funnel-window must be a positive integer number of seconds (got "${value}").`);
+          }
+          opts.funnelWindow = n;
           break;
         }
         case '--screen-map': opts.screenMap = value; break;
@@ -219,6 +233,7 @@ async function main(): Promise<void> {
 
   /* 2 — counts: live PostHog query, or the offline --counts file */
   let counts: Counts;
+  let pgOpts: PostHogOptions | undefined;
   if (opts.counts) {
     counts = loadCountsFile(opts.counts);
     log(`· counts: ${Object.keys(counts.screens).length} screens, ${counts.transitions.length} transitions (offline file ${opts.counts})`);
@@ -237,14 +252,15 @@ async function main(): Promise<void> {
     if (!projectId) fail('No PostHog project id — pass --project or set POSTHOG_PROJECT_ID.');
     const host = opts.host ?? process.env.POSTHOG_HOST ?? DEFAULT_HOST;
     log(`→ querying PostHog (project ${projectId}, last ${opts.days} days)…`);
-    counts = await fetchCounts({
+    pgOpts = {
       host,
       projectId,
       apiKey,
       appId: atlas.app_id, // canonical Atlas app id, matches properties.atlas_app_id
       days: opts.days,
       timeoutMs: opts.timeout * 1000,
-    });
+    };
+    counts = await fetchCounts(pgOpts);
     log(`· PostHog: ${Object.keys(counts.screens).length} screens, ${counts.transitions.length} transitions with data`);
   }
 
@@ -254,18 +270,41 @@ async function main(): Promise<void> {
   printMappingReport(mapping, log);
 
   /* 4 — drop-off compute */
-  const dateRange = counts.date_range ?? `Last ${opts.days} days`;
-  // Both modes estimate the funnel with the same monotone min-cohort over
-  // per-step transition counts (see computeAnalytics) — an upper bound on
-  // true end-to-end traversal, since pairwise counts can't prove full paths.
-  // A future upgrade for live mode is a real HogQL windowFunnel() sequential
-  // query for exact traversal.
-  const disclaimer =
-    counts.source === 'posthog'
-      ? `Distinct-user counts from PostHog atlas_screen events (${dateRange.toLowerCase()}), joined onto the Revyl Atlas screen graph. Funnel conversion uses a monotone min-cohort over per-step transition counts — an upper bound on true end-to-end traversal.`
-      : `Counts loaded from ${opts.counts} (offline mode) — same schema the live PostHog query produces, joined onto the Revyl Atlas screen graph. Funnel conversion is an estimate from pairwise per-step counts (monotone min-cohort) — an upper bound on true end-to-end path traversal.`;
   const transitions = buildNodeTransitions(counts, mapping);
-  const analytics = computeAnalytics(atlas, counts, mapping, transitions, { dateRange, disclaimer });
+  const dateRange = counts.date_range ?? `Last ${opts.days} days`;
+
+  // Live mode: run a real sequential funnel (HogQL windowFunnel) over the
+  // discovered path for exact end-to-end conversion. Offline mode has no
+  // per-user data, so computeAnalytics uses the monotone min-cohort estimate.
+  let funnelPath: string[] | undefined;
+  let sequentialCohort: number[] | undefined;
+  if (pgOpts && counts.source === 'posthog') {
+    const { users, keysByNode } = nodeUsersFromCounts(counts, mapping);
+    const byId = new Map(atlas.nodes.map(n => [n.id, n]));
+    const p = buildFunnelPath(atlas, byId, users, transitions);
+    const stepKeys = p.map(id => keysByNode.get(id) ?? []);
+    if (p.length >= 2 && stepKeys.every(k => k.length > 0)) {
+      const windowSeconds = opts.funnelWindow ?? opts.days * 86400;
+      try {
+        log(`→ querying PostHog funnel (${p.length} steps, ${opts.funnelWindow ? `${windowSeconds}s` : `${opts.days}d`} window)…`);
+        sequentialCohort = await fetchFunnel(pgOpts, stepKeys, windowSeconds);
+        funnelPath = p;
+      } catch (err) {
+        log(`! funnel query failed (${(err as Error).message}) — using the min-cohort estimate.`);
+      }
+    }
+  }
+
+  const sequential = sequentialCohort !== undefined;
+  const disclaimer = sequential
+    ? `Distinct-person counts from PostHog atlas_screen events (${dateRange.toLowerCase()}), joined onto the Revyl Atlas screen graph. End-to-end conversion is a real sequential funnel (HogQL windowFunnel) over the discovered path.`
+    : counts.source === 'posthog'
+      ? `Distinct-person counts from PostHog atlas_screen events (${dateRange.toLowerCase()}), joined onto the Revyl Atlas screen graph. Funnel conversion uses a monotone min-cohort estimate over per-step transition counts — an upper bound on true end-to-end traversal.`
+      : `Counts loaded from ${opts.counts} (offline mode) — same schema the live PostHog query produces, joined onto the Revyl Atlas screen graph. Funnel conversion is a monotone min-cohort estimate from pairwise per-step counts — an upper bound on true end-to-end path traversal.`;
+
+  const analytics = computeAnalytics(atlas, counts, mapping, transitions, {
+    dateRange, disclaimer, path: funnelPath, sequentialCohort,
+  });
 
   /* 5 — render the single-file report */
   const appName = atlas.app_name ?? app;

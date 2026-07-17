@@ -26,7 +26,7 @@ POSTHOG_PERSONAL_API_KEY=test node packages/report/dist/cli.js generate \
   --screen-map demo/vault-screen-map.json --atlas-cache demo/.atlas-cache/vault --out /tmp/vault-live.html
 ```
 
-This runs the generator's real `fetch` → HogQL → response-parse code (screens + transitions + leavers queries, Bearer auth) and produces the same funnel as the offline `--counts` render.
+This runs the generator's real `fetch` → HogQL → response-parse code: the screens + transitions + leavers queries, plus the sequential `windowFunnel` query for exact conversion (live mode uses it; offline `--counts` uses the min-cohort estimate). Because `windowFunnel` dedupes by `person_id`, the live Vault number lands at 13.2%, matching the cleaned offline counts.
 
 ## Regenerate a report
 

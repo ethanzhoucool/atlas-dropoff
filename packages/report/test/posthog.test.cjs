@@ -26,6 +26,46 @@ test('all three HogQL queries carry an explicit LIMIT', async () => {
   }
 });
 
+/* ── sequential funnel (windowFunnel) ───────────────────────── */
+
+test('funnelQuery builds a windowFunnel over N ordered steps, keys bound via values', async () => {
+  const { funnelQuery, FUNNEL_MAX_STEPS } = await posthogP;
+  assert.equal(FUNNEL_MAX_STEPS, 32);
+  const sql = funnelQuery(28, 86400, 3);
+  assert.match(sql, /windowFunnel\(86400\)/);
+  for (const k of [1, 2, 3]) assert.match(sql, new RegExp(`countIf\\(level >= ${k}\\) AS s${k}`));
+  // Step keys are bound as {stepK} values, never spliced into SQL text.
+  for (const k of [0, 1, 2]) assert.match(sql, new RegExp(`properties\\.screen IN \\{step${k}\\}`));
+  assert.match(sql, /properties\.atlas_app_id = \{app_id\}/);
+  assert.throws(() => funnelQuery(28, 86400, 1), /2\.\.32 steps/);
+  assert.throws(() => funnelQuery(28, 86400, 33), /2\.\.32 steps/);
+  assert.throws(() => funnelQuery(28, 0, 3), /window/);
+});
+
+test('fetchFunnel parses the funnel row and enforces a monotone cohort', async () => {
+  const { fetchFunnel } = await posthogP;
+  const orig = global.fetch;
+  let sentBody;
+  // Row is non-monotone on purpose (120 > 100): must be clamped down.
+  global.fetch = async (_url, init) => {
+    sentBody = JSON.parse(init.body);
+    return { ok: true, json: async () => ({ results: [[100, 120, 40]] }) };
+  };
+  try {
+    const cohort = await fetchFunnel(
+      { host: 'http://x', projectId: '1', apiKey: 'k', appId: 'app-42', days: 28 },
+      [['/a'], ['/b1', '/b2'], ['/c']],
+      86400,
+    );
+    assert.deepEqual(cohort, [100, 100, 40]);
+    // step key arrays are passed as values, not spliced into SQL
+    assert.deepEqual(sentBody.query.values.step1, ['/b1', '/b2']);
+    assert.equal(sentBody.query.values.app_id, 'app-42');
+  } finally {
+    global.fetch = orig;
+  }
+});
+
 /* ── loadCountsFile: accepts the documented schema ──────────── */
 
 test('loadCountsFile accepts the shipped counts.example.json (full schema incl. leavers)', async () => {
