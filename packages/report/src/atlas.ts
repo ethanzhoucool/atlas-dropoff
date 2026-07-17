@@ -240,6 +240,18 @@ async function fetchAtlas(opts: AtlasFetchOptions): Promise<AtlasGraph> {
 
 /* ── screenshots ────────────────────────────────────────────── */
 
+/**
+ * Node ids come from the Atlas service — sanitize before interpolating them
+ * into filesystem paths (same replacement the CLI applies to --app) so an id
+ * containing "/" or ".." can't escape the cache dir. A cleaned value that is
+ * nothing but dots ("." / "..") is still a traversal segment, so dots are
+ * replaced in that case too.
+ */
+function sanitizeIdForPath(s: string): string {
+  const cleaned = s.replace(/[^A-Za-z0-9._-]+/g, '-');
+  return /^\.+$/.test(cleaned) ? cleaned.replace(/\./g, '-') : cleaned;
+}
+
 async function downloadScreenshot(
   revylPath: string,
   app: string,
@@ -247,7 +259,8 @@ async function downloadScreenshot(
   screensDir: string,
 ): Promise<string | null> {
   if (!node.rep_observation_id) return null;
-  const tmp = path.join(screensDir, `.tmp-${node.id}`);
+  const safeId = sanitizeIdForPath(node.id);
+  const tmp = path.join(screensDir, `.tmp-${safeId}`);
   fs.mkdirSync(tmp, { recursive: true });
 
   let local: string | null = null;
@@ -273,7 +286,7 @@ async function downloadScreenshot(
   }
 
   const ext = path.extname(local) || '.png';
-  const finalAbs = path.join(screensDir, `${node.id}${ext}`);
+  const finalAbs = path.join(screensDir, `${safeId}${ext}`);
   try {
     fs.renameSync(local, finalAbs);
   } catch {
@@ -281,7 +294,7 @@ async function downloadScreenshot(
     fs.rmSync(local, { force: true });
   }
   fs.rmSync(tmp, { recursive: true, force: true });
-  return `screens/${node.id}${ext}`;
+  return `screens/${safeId}${ext}`;
 }
 
 /** Turn cached relative screenshot paths into verified absolute ones. */

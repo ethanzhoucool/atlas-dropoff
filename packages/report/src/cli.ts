@@ -255,10 +255,15 @@ async function main(): Promise<void> {
 
   /* 4 — drop-off compute */
   const dateRange = counts.date_range ?? `Last ${opts.days} days`;
+  // Both modes estimate the funnel with the same monotone min-cohort over
+  // per-step transition counts (see computeAnalytics) — an upper bound on
+  // true end-to-end traversal, since pairwise counts can't prove full paths.
+  // A future upgrade for live mode is a real HogQL windowFunnel() sequential
+  // query for exact traversal.
   const disclaimer =
     counts.source === 'posthog'
-      ? `Distinct-user counts from PostHog atlas_screen events (${dateRange.toLowerCase()}), joined onto the Revyl Atlas screen graph.`
-      : `Counts loaded from ${opts.counts} (offline mode) — same schema the live PostHog query produces, joined onto the Revyl Atlas screen graph.`;
+      ? `Distinct-user counts from PostHog atlas_screen events (${dateRange.toLowerCase()}), joined onto the Revyl Atlas screen graph. Funnel conversion uses a monotone min-cohort over per-step transition counts — an upper bound on true end-to-end traversal.`
+      : `Counts loaded from ${opts.counts} (offline mode) — same schema the live PostHog query produces, joined onto the Revyl Atlas screen graph. Funnel conversion is an estimate from pairwise per-step counts (monotone min-cohort) — an upper bound on true end-to-end path traversal.`;
   const transitions = buildNodeTransitions(counts, mapping);
   const analytics = computeAnalytics(atlas, counts, mapping, transitions, { dateRange, disclaimer });
 

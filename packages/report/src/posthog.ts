@@ -25,6 +25,14 @@ export interface PostHogOptions {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/**
+ * Explicit row cap on every HogQL query. Without a LIMIT the PostHog query
+ * API silently truncates at ~100 rows, dropping the low-volume tail that
+ * exit-rate math depends on. fetchCounts warns when a result set hits this
+ * cap (i.e. results were truncated at 50k too).
+ */
+export const QUERY_ROW_LIMIT = 50_000;
+
 /* ── HogQL ──────────────────────────────────────────────────── */
 
 function assertDays(days: number): void {
@@ -51,6 +59,7 @@ export function screensQuery(days: number): string {
     `  AND timestamp > now() - INTERVAL ${days} DAY`,
     'GROUP BY screen',
     'ORDER BY users DESC',
+    `LIMIT ${QUERY_ROW_LIMIT}`,
   ].join('\n');
 }
 
@@ -69,6 +78,7 @@ export function transitionsQuery(days: number): string {
     `  AND timestamp > now() - INTERVAL ${days} DAY`,
     'GROUP BY src, dst',
     'ORDER BY users DESC',
+    `LIMIT ${QUERY_ROW_LIMIT}`,
   ].join('\n');
 }
 
@@ -89,6 +99,7 @@ export function leaversQuery(days: number): string {
     "  AND properties.prev_screen != ''",
     `  AND timestamp > now() - INTERVAL ${days} DAY`,
     'GROUP BY src',
+    `LIMIT ${QUERY_ROW_LIMIT}`,
   ].join('\n');
 }
 
@@ -164,6 +175,18 @@ export async function fetchCounts(opts: PostHogOptions): Promise<Counts> {
     runHogQL(opts, transitionsQuery(opts.days)),
     runHogQL(opts, leaversQuery(opts.days)),
   ]);
+
+  const warnTruncated = (label: string, rows: unknown[][]): void => {
+    if (rows.length >= QUERY_ROW_LIMIT) {
+      process.stderr.write(
+        `! PostHog ${label} query returned ${rows.length} rows — hit the LIMIT ${QUERY_ROW_LIMIT} cap, ` +
+        'so the low-volume tail was truncated and exit rates may be skewed.\n',
+      );
+    }
+  };
+  warnTruncated('screens', screenRows);
+  warnTruncated('transitions', transitionRows);
+  warnTruncated('leavers', leaverRows);
 
   const screens: Record<string, ScreenCount> = {};
   for (const row of screenRows) {

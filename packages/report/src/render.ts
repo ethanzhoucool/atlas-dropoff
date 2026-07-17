@@ -894,7 +894,9 @@ function renderFunnel() {
     var outDrop = next ? next.drop_pct : 0;
     var health = next ? edgeHealth(outDrop) : 'ok';
     var barPct = Math.min(100, f.users / start * 100);
-    var fillFrac = next ? Math.min(100, next.users / Math.max(1, f.users) * 100) : 100;
+    /* fill fraction derives from the SAME drop_pct the adjacent label shows
+       (both come from the monotone cohort), so bar and label always agree */
+    var fillFrac = next ? Math.max(0, Math.min(100, (1 - next.drop_pct) * 100)) : 100;
 
     var row = el('div', 'frow' + (isGoal ? ' goal' : ''));
     row.append(el('div', 'fr-step', '' + f.step));
@@ -927,7 +929,7 @@ function renderFunnel() {
 
     var num = el('div', 'fr-num');
     num.append(el('div', 'fr-users', fmt(f.users)));
-    num.append(el('div', 'fr-pct', (isGoal ? '✓ ' : '') + Math.round(f.users / start * 100) + '%'));
+    num.append(el('div', 'fr-pct', (isGoal ? '✓ ' : '') + Math.min(100, Math.round(f.users / start * 100)) + '%'));
     row.append(num);
 
     row.onclick = function () { openDrawer(f.screen_id); };
@@ -980,8 +982,10 @@ function openDrawer(id) {
   var ex = el('div', 'd-exit ' + n.health);
   if (n.is_goal) {
     ex.append(el('div', 'big mono', '✓'));
-    /* hard-coded markup + numeric-only interpolation — safe for elHtml */
-    ex.append(elHtml('div', 'lbl', '<b>Goal reached.</b><br>' + fmt(n.users) + ' of ' + fmt(D.totals.sessions) + ' users converted'));
+    /* hard-coded markup + numeric-only interpolation — safe for elHtml.
+       totals.converted is the funnel cohort — n.users counts everyone who
+       viewed the goal screen by any path and could exceed sessions. */
+    ex.append(elHtml('div', 'lbl', '<b>Goal reached.</b><br>' + fmt(D.totals.converted) + ' of ' + fmt(D.totals.sessions) + ' users converted'));
   } else {
     ex.append(el('div', 'big mono', pct(n.exit_rate)));
     ex.append(elHtml('div', 'lbl', 'of users <b>exit here</b><br>' + fmt(n.exits) + ' of ' + fmt(n.users) + ' users'));

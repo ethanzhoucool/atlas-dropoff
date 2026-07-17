@@ -43,6 +43,14 @@ export class AtlasClient {
   private sessionId: string;
   private lastScreenKey: string | null = null;
   private flushing = false;
+  /** The in-flight flush, so concurrent flush() callers can await it. */
+  private flushPromise: Promise<void> = Promise.resolve();
+  /**
+   * Bumped on every identify()/reset(). Chained identity ops snapshot it at
+   * call time and skip their distinctId/storage writes when a newer call has
+   * superseded them, so a stale op can never clobber the current identity.
+   */
+  private identityEpoch = 0;
 
   /** Anonymous per-install id, loaded (or minted) from storage at init. */
   private installId: string | undefined;
@@ -156,31 +164,49 @@ export class AtlasClient {
    * persists the id so future launches keep it until `reset()`.
    */
   identify(userId: string, props?: AtlasEventProperties): void {
-    if (!userId || userId === this.distinctId) {
+    if (!userId) {
       return;
     }
+    // Same id with no props is a true no-op. Same id WITH props still sends a
+    // $identify so the $set update reaches the (already identified) user.
+    if (userId === this.distinctId && !props) {
+      return;
+    }
+    // Freeze the transition at call time. The chained op below runs later, and
+    // by then this.distinctId may have moved on (a rapid second identify(), a
+    // reset()) — the $identify event must describe THIS call's from→to.
+    const fromId = this.distinctId;
+    const toId = userId;
+    const epoch = ++this.identityEpoch;
     // Switch synchronously so events tracked right after identify() already
-    // carry the user id. May be undefined if the persisted id is still
-    // loading — the chained op below falls back to the install id then.
-    const previousKnown = this.distinctId;
-    this.distinctId = userId;
+    // carry the user id. `fromId` may be undefined if the persisted id is
+    // still loading — the chained op below falls back to the install id then.
+    if (this.distinctId !== toId) {
+      this.distinctId = toId;
+    }
 
     this.identityReady = this.identityReady.then(async () => {
-      const previous = previousKnown ?? this.installId;
-      if (previous === userId) {
-        return;
+      const previous = fromId ?? this.installId;
+      const properties: AtlasEventProperties = {};
+      if (previous !== undefined && previous !== toId) {
+        properties.$anon_distinct_id = previous;
       }
-      const properties: AtlasEventProperties = { $anon_distinct_id: previous };
       if (props) {
         properties.$set = props;
       }
-      this.capture("$identify", properties);
-      try {
-        await this.storage.setItem(IDENTIFIED_ID_KEY, userId);
-      } catch {
-        // Memory-only storage — the identity just won't survive a restart.
+      if (properties.$anon_distinct_id !== undefined || props) {
+        // Stamped with the frozen toId — never the mutable this.distinctId.
+        this.capture("$identify", properties, toId);
       }
-      this.logDebug(`identified as ${userId}`);
+      // Persist only if no later identify()/reset() superseded this call.
+      if (this.identityEpoch === epoch) {
+        try {
+          await this.storage.setItem(IDENTIFIED_ID_KEY, toId);
+        } catch {
+          // Memory-only storage — the identity just won't survive a restart.
+        }
+        this.logDebug(`identified as ${toId}`);
+      }
     });
   }
 
@@ -193,12 +219,18 @@ export class AtlasClient {
     // trackScreen() call is already attributed to the new session.
     this.sessionId = generateId();
     this.lastScreenKey = null;
+    const epoch = ++this.identityEpoch;
     // Unconditional: may set undefined while installId is still loading —
     // that's correct, post-reset events must never carry the stale identified
     // id. The flush-time restamp (and the chained op below) fill in the
     // install id once it's available.
     this.distinctId = this.installId;
     this.identityReady = this.identityReady.then(async () => {
+      if (this.identityEpoch !== epoch) {
+        // A later identify() (or reset()) superseded this one — applying the
+        // install id now would clobber the newer identity.
+        return;
+      }
       this.distinctId = this.installId; // covers a reset() while ids were loading
       try {
         await this.storage.removeItem(IDENTIFIED_ID_KEY);
@@ -211,11 +243,21 @@ export class AtlasClient {
 
   /** Send everything queued right now. Resolves when the attempt finishes. */
   async flush(): Promise<void> {
-    if (this.flushing || this.queue.length === 0) {
-      return;
+    if (this.flushing) {
+      // Piggyback on the in-flight flush so callers (and shutdown()) actually
+      // wait for the attempt to finish instead of resolving immediately.
+      return this.flushPromise;
     }
     this.flushing = true;
+    this.flushPromise = this.doFlush();
+    return this.flushPromise;
+  }
+
+  private async doFlush(): Promise<void> {
     try {
+      // Await the identity chain BEFORE checking the queue: a just-called
+      // identify()/reset() may still be about to enqueue its $identify.
+      // identityReady never rejects, so this is safe.
       await this.identityReady;
       const batch = this.queue.splice(0, this.queue.length);
       if (batch.length === 0) {
@@ -292,17 +334,26 @@ export class AtlasClient {
   async shutdown(): Promise<void> {
     clearInterval(this.flushTimer);
     this.appStateSubscription?.remove();
+    // Drain: wait out any in-flight flush (events captured during it stay
+    // queued), then flush once more so nothing is left behind.
+    await this.flushPromise;
     await this.flush();
   }
 
-  private capture(event: string, properties: AtlasEventProperties): void {
+  private capture(
+    event: string,
+    properties: AtlasEventProperties,
+    distinctIdOverride?: string
+  ): void {
     if (this.queue.length >= MAX_QUEUE_SIZE) {
       this.queue.shift(); // Drop the oldest — recent behavior matters more.
     }
     this.queue.push({
       event,
-      // Stamped at flush time if identity hasn't finished loading yet.
-      distinct_id: this.distinctId ?? "",
+      // An explicit override (identify()'s frozen target id) always wins;
+      // otherwise stamped at flush time if identity hasn't loaded yet. The
+      // flush-time restamp only fills EMPTY ids, so overrides survive it.
+      distinct_id: distinctIdOverride ?? this.distinctId ?? "",
       timestamp: new Date().toISOString(),
       properties: {
         ...properties,

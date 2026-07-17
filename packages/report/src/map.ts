@@ -18,14 +18,31 @@ export function mapScreens(
   counts: Counts,
   atlas: AtlasGraph,
   explicit: Record<string, string> = {},
+  warn: (line: string) => void = line => { process.stderr.write(`${line}\n`); },
 ): Mapping {
   const byId = new Map<string, AtlasNode>(atlas.nodes.map(n => [n.id, n]));
   const byName = new Map<string, AtlasNode>();
   const byNorm = new Map<string, AtlasNode>();
+  const normGroups = new Map<string, AtlasNode[]>();
   for (const n of atlas.nodes) {
     if (!byName.has(n.name)) byName.set(n.name, n);
     const key = normalize(n.name);
-    if (key && !byNorm.has(key)) byNorm.set(key, n);
+    if (!key) continue;
+    if (!byNorm.has(key)) byNorm.set(key, n);
+    const group = normGroups.get(key);
+    if (group) group.push(n);
+    else normGroups.set(key, [n]);
+  }
+  // Two Atlas nodes sharing a display name (or names that normalize to the
+  // same key) make every node after the first unreachable by name — any key
+  // matching that name silently lands on the first node. Surface it so the
+  // user knows to map the shadowed node(s) by id.
+  for (const [key, group] of normGroups) {
+    if (group.length < 2) continue;
+    warn(
+      `! ${group.length} Atlas nodes share the name key "${key}" — only the first is reachable ` +
+      `by name (map the others by node id): ${group.map(n => `"${n.name}" (${n.id})`).join(', ')}`,
+    );
   }
 
   const resolveTarget = (target: string): AtlasNode | null =>

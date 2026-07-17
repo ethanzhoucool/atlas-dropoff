@@ -19,6 +19,8 @@ const TOP_EXITS_SHOWN = 3;
 export interface ComputeOptions {
   dateRange: string;
   disclaimer: string;
+  /** Warning sink (defaults to stderr) — injectable for tests. */
+  warn?: (line: string) => void;
 }
 
 /* ── small shared helpers ───────────────────────────────────── */
@@ -69,7 +71,15 @@ export function buildNodeTransitions(
       inner = new Map<string, number>();
       out.set(src, inner);
     }
-    inner.set(dst, (inner.get(dst) ?? 0) + t.users);
+    // Multiple PostHog key-pairs can collapse onto one (src,dst) node pair
+    // when several keys map to a single node. count(DISTINCT …) values are
+    // NOT additive across key-pairs (one person seen under two keys would be
+    // double-counted by a sum), so take the MAX — a guaranteed lower bound
+    // on the true distinct union. computeAnalytics warns whenever any node
+    // has >1 mapped key.
+    // TODO(live mode): the exact fix is to re-query PostHog with
+    // count(DISTINCT person_id) over the union of keys per node pair.
+    inner.set(dst, Math.max(inner.get(dst) ?? 0, t.users));
   }
   return out;
 }
@@ -84,16 +94,34 @@ export function computeAnalytics(
   opts: ComputeOptions,
 ): Analytics {
   const byId = new Map<string, AtlasNode>(atlas.nodes.map(n => [n.id, n]));
+  const warn = opts.warn ?? ((line: string): void => { process.stderr.write(`${line}\n`); });
 
-  // Distinct users / raw events per Atlas node (multiple PostHog keys
-  // mapping to one node are summed).
+  // Distinct users / raw events per Atlas node. When multiple PostHog keys
+  // map to one node, count(DISTINCT …) values are NOT additive (one person
+  // seen under two keys would be double-counted by a sum), so take the MAX —
+  // a guaranteed lower bound on the true distinct union. Raw event counts
+  // ARE additive, so those are still summed.
+  // TODO(live mode): the exact fix is to re-query PostHog with
+  // count(DISTINCT person_id) over the union of keys per node.
   const users = new Map<string, number>();
   const events = new Map<string, number>();
+  const keysByNode = new Map<string, string[]>();
   for (const [key, c] of Object.entries(counts.screens)) {
     const id = mapping.screenToNode.get(key);
     if (!id) continue;
-    users.set(id, (users.get(id) ?? 0) + c.users);
+    users.set(id, Math.max(users.get(id) ?? 0, c.users));
     events.set(id, (events.get(id) ?? 0) + c.events);
+    const keys = keysByNode.get(id);
+    if (keys) keys.push(key);
+    else keysByNode.set(id, [key]);
+  }
+  const multiKeyNodes = [...keysByNode.entries()].filter(([, keys]) => keys.length > 1);
+  if (multiKeyNodes.length > 0) {
+    warn(`! ${multiKeyNodes.length} Atlas node(s) have multiple PostHog keys mapped — distinct-user`);
+    warn('  counts use max(keys), a lower bound on the true distinct union, so they are approximate:');
+    for (const [id, keys] of multiKeyNodes) {
+      warn(`    ${byId.get(id)?.name ?? id} ← ${keys.join(', ')}`);
+    }
   }
   if (users.size === 0) {
     throw new Error(
@@ -118,47 +146,53 @@ export function computeAnalytics(
   const inFunnel = new Set(path);
   const goalId = path[path.length - 1];
 
-  /* funnel steps — conversion between consecutive steps uses the ACTUAL
-     observed transition count (users who traversed step_{i-1} → step_i)
-     when transition data exists; the population ratio users_i/users_{i-1}
-     is only a fallback (it compares total viewers, not real traversals). */
+  /* Monotone min-cohort along the funnel path. Per-screen viewer totals
+     (users.get(node)) count everyone who saw a screen by ANY path, so they
+     are not a funnel: a later screen can have more viewers than an earlier
+     one, and dividing them yields fake >100% conversions. Instead:
+       cohort[0] = entry screen's distinct users
+       cohort[i] = min(cohort[i-1], cap_i)  where cap_i is the observed
+                   step transition (real traversals) when present, else the
+                   step screen's total viewers.
+     This is monotone non-increasing, never exceeds a transition bottleneck,
+     and makes end-to-end conversion an honest estimate — an upper bound on
+     true sequential traversal, since pairwise counts can't prove full paths.
+     The per-screen viewer totals still feed the screens{} map/drawer data,
+     where "everyone who saw this screen" is the right number.
+     TODO(live mode): a future upgrade is a real HogQL windowFunnel()
+     sequential query for exact end-to-end traversal. */
+  const cohort: number[] = [users.get(path[0]) ?? 0];
+  for (let i = 1; i < path.length; i++) {
+    const transU = transitions.get(path[i - 1])?.get(path[i]);
+    const cap = transU !== undefined && transU > 0 ? transU : users.get(path[i]) ?? 0;
+    cohort.push(Math.min(cohort[i - 1], cap));
+  }
+
   const steps: FunnelStep[] = path.map((id, i) => {
     const node = byId.get(id)!;
-    const u = users.get(id) ?? 0;
     if (i === 0) {
       return {
         step: 1,
         screen_id: id,
         screen_name: node.name,
         label: prettyName(node),
-        users: u,
+        users: cohort[0],
         conversion_from_prev: 1,
         drop_pct: 0,
         lost: 0,
         note: '',
       };
     }
-    const prevId = path[i - 1];
-    const prevU = users.get(prevId) ?? 0;
-    const transU = transitions.get(prevId)?.get(id);
-    let conv: number;
-    let lost: number;
-    if (transU !== undefined && transU > 0 && prevU > 0) {
-      conv = Math.min(1, transU / prevU);
-      lost = Math.max(0, prevU - transU);
-    } else {
-      conv = prevU > 0 ? Math.min(1, u / prevU) : 0;
-      lost = Math.max(0, prevU - u);
-    }
+    const conv = cohort[i - 1] > 0 ? cohort[i] / cohort[i - 1] : 0;
     return {
       step: i + 1,
       screen_id: id,
       screen_name: node.name,
       label: prettyName(node),
-      users: u,
+      users: cohort[i],
       conversion_from_prev: round3(conv),
       drop_pct: round3(Math.max(0, 1 - conv)),
-      lost,
+      lost: cohort[i - 1] - cohort[i],
       note: '',
     };
   });
@@ -200,13 +234,18 @@ export function computeAnalytics(
   /* distinct "leavers" (users who navigated FROM the screen to any next
      screen) per Atlas node, when the counts source provides them. Summing
      per-destination transition counts instead double-counts users who left
-     to multiple destinations and biases exit rates LOW. */
+     to multiple destinations and biases exit rates LOW. An empty-but-present
+     leavers:{} must NOT engage this path — it would force every screen to
+     100% exit — so guard on it actually having entries. */
+  const hasLeavers = counts.leavers !== undefined && Object.keys(counts.leavers).length > 0;
   const leaversByNode = new Map<string, number>();
-  if (counts.leavers) {
-    for (const [key, n] of Object.entries(counts.leavers)) {
+  if (hasLeavers) {
+    for (const [key, n] of Object.entries(counts.leavers!)) {
       const id = mapping.screenToNode.get(key);
       if (!id || n <= 0) continue;
-      leaversByNode.set(id, (leaversByNode.get(id) ?? 0) + n);
+      // Distinct leaver counts are not additive across keys either — max,
+      // same lower-bound rationale as the per-node user counts above.
+      leaversByNode.set(id, Math.max(leaversByNode.get(id) ?? 0, n));
     }
   }
 
@@ -217,7 +256,7 @@ export function computeAnalytics(
     const outs = transitions.get(node.id) ?? new Map<string, number>();
     let outTotal = 0;
     for (const v of outs.values()) outTotal += v;
-    const movedOn = counts.leavers ? leaversByNode.get(node.id) ?? 0 : outTotal;
+    const movedOn = hasLeavers ? leaversByNode.get(node.id) ?? 0 : outTotal;
     const exitShare = Math.max(0, 1 - movedOn / u);
     const exits = Math.round(u * exitShare);
 
@@ -252,7 +291,7 @@ export function computeAnalytics(
       rage_taps: null,
       avg_taps: null,
       top_exits: topExits,
-      insight: insightFor(node, u, exitShare, isGoal, biggest?.screen_id === node.id, sessions),
+      insight: insightFor(node, u, exitShare, isGoal, biggest?.screen_id === node.id, sessions, converted),
       hotspots: [],
       in_funnel: inFunnel.has(node.id),
     };
@@ -261,6 +300,8 @@ export function computeAnalytics(
   const totals: Totals = {
     sessions,
     converted,
+    // converted comes from the monotone cohort, so this can't exceed 100 —
+    // the clamp is purely defensive.
     conversion_pct: Math.min(
       100,
       Math.max(0, Math.round((converted / Math.max(1, sessions)) * 1000) / 10),
@@ -362,9 +403,12 @@ function insightFor(
   isGoal: boolean,
   isBiggestLeakSource: boolean,
   sessions: number,
+  converted: number,
 ): string {
   if (isGoal) {
-    return `Funnel goal. ${fmtInt(u)} of ${fmtInt(sessions)} users who entered the flow made it here (${pctStr(u / Math.max(1, sessions))}).`;
+    // Use the funnel cohort, not the screen's total viewer count — viewers
+    // arrive by any path and can exceed the entry cohort (fake >100%).
+    return `Funnel goal. ${fmtInt(converted)} of ${fmtInt(sessions)} users who entered the flow made it here (${pctStr(converted / Math.max(1, sessions))}).`;
   }
   const h = healthOf(exitShare);
   if (h === 'leak') {
