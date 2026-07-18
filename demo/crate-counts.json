@@ -1,5 +1,5 @@
 {
-  "_note": "Real PostHog counts for the Crate checkout funnel, seeded through the @revyl/atlas-analytics SDK into project App (111361). Distinct-user counts (count(DISTINCT person_id)) over the last 24h; leavers = distinct users who left each screen.",
+  "_note": "Real PostHog counts for the Crate checkout funnel, seeded through the @ethanzhoucool/atlas-analytics SDK into project App (111361). Distinct-user counts (count(DISTINCT person_id)) over the last 24h; leavers = distinct users who left each screen.",
   "date_range": "Last 24 hours",
   "screens": {
     "/": { "users": 1201, "events": 1201 },

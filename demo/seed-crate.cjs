@@ -1,7 +1,7 @@
 /**
  * Demo seeder for the Atlas Drop-off real loop.
  *
- * Drives realistic checkout-funnel traffic through the REAL @revyl/atlas-analytics
+ * Drives realistic checkout-funnel traffic through the REAL @ethanzhoucool/atlas-analytics
  * client (packages/sdk/dist) into PostHog project "App" (111361), tagged with the
  * Crate Atlas app id. Each simulated session is a fresh AtlasClient, so it gets its
  * own install id -> one distinct user per session (no identity merging).

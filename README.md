@@ -11,7 +11,7 @@ If your app has a [Revyl Atlas](https://revyl.com) map, your funnel is already d
 **1. Add the provider** at your app root:
 
 ```tsx
-import { AtlasProvider } from '@revyl/atlas-analytics';
+import { AtlasProvider } from '@ethanzhoucool/atlas-analytics';
 
 <AtlasProvider
   apiKey={process.env.EXPO_PUBLIC_POSTHOG_KEY!}   // PostHog project (phc_) key
@@ -74,7 +74,7 @@ The skill takes over: it builds the repo, detects your router (Expo Router, Reac
 ```
 atlas-dropoff/
 ├── packages/
-│   ├── sdk/            @revyl/atlas-analytics: Expo/RN SDK, one atlas_screen event per screen
+│   ├── sdk/            @ethanzhoucool/atlas-analytics: Expo/RN SDK, one atlas_screen event per screen
 │   └── report/         atlas-report: Node CLI that renders report.html from Atlas + PostHog
 ├── demo/               a real end-to-end report + the seeder that produced it
 ├── SKILL.md            Claude Code skill (full integration workflow)

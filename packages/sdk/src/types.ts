@@ -1,5 +1,5 @@
 /**
- * Public types for @revyl/atlas-analytics.
+ * Public types for @ethanzhoucool/atlas-analytics.
  */
 
 /** Configuration accepted by `initAtlasAnalytics()` and `<AtlasProvider>`. */

@@ -2,7 +2,7 @@
 name: atlas-dropoff-analytics
 description: >
   Integrate Atlas Drop-off into an Expo or React Native app: install the
-  @revyl/atlas-analytics SDK, wrap the app root in AtlasProvider, verify
+  @ethanzhoucool/atlas-analytics SDK, wrap the app root in AtlasProvider, verify
   atlas_screen events reach PostHog, map routes to Revyl Atlas nodes in a
   screen-map.json, and generate a drop-off report on the app's real
   screenshots. Trigger on "integrate Atlas Drop-off", "add drop-off
@@ -14,7 +14,7 @@ description: >
 
 Integrate two pieces from this repo into the user's mobile app:
 
-1. `@revyl/atlas-analytics` (`packages/sdk/`): an Expo/React Native SDK with no native modules (works in Expo Go). It sends one `atlas_screen` PostHog event per screen view.
+1. `@ethanzhoucool/atlas-analytics` (`packages/sdk/`): an Expo/React Native SDK with no native modules (works in Expo Go). It sends one `atlas_screen` PostHog event per screen view.
 2. `atlas-report` (`packages/report/`): a Node CLI that combines the app's Revyl Atlas map with those PostHog events and renders a self-contained `report.html` showing where users drop off, on the app's real screenshots.
 
 The `screen` property on each event is the join key to Atlas nodes. Wire the SDK, then produce the route-to-node mapping so the report lines up. `$REPO` = this cloned repo's path; `$APP` = the user's app.
@@ -38,7 +38,7 @@ Confirm these prerequisites; stop with a clear message if any is missing:
 **3. Wire the provider at the app root.** Add `EXPO_PUBLIC_POSTHOG_KEY=phc_...` to `$APP/.env` (never hardcode). Use the Atlas app **UUID** (from `revyl atlas apps`) as `atlasAppId`: the report joins on this id, so the app name won't match.
 
 ```tsx
-import { AtlasProvider } from '@revyl/atlas-analytics';
+import { AtlasProvider } from '@ethanzhoucool/atlas-analytics';
 
 <AtlasProvider
   apiKey={process.env.EXPO_PUBLIC_POSTHOG_KEY!}
@@ -51,7 +51,7 @@ import { AtlasProvider } from '@revyl/atlas-analytics';
 For Expo Router, wrapping `app/_layout.tsx` is enough: the SDK auto-tracks via `useSegments()` and emits collapsed route patterns (`/product/[id]`, not `/product/42`), so dynamic routes don't fragment the funnel. For React Navigation, also wire the container ref:
 
 ```tsx
-import { AtlasProvider, useAtlasNavigationTracking } from '@revyl/atlas-analytics';
+import { AtlasProvider, useAtlasNavigationTracking } from '@ethanzhoucool/atlas-analytics';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 
 function Navigation() {

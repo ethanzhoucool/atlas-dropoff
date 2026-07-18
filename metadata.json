@@ -1,7 +1,7 @@
 {
   "version": "0.1.0",
   "name": "atlas-dropoff",
-  "description": "Agent skill for integrating Atlas Drop-off: install the @revyl/atlas-analytics Expo/React Native SDK, wire AtlasProvider with a PostHog key and Revyl Atlas app id, verify atlas_screen events, build a screen-map.json against the live Atlas graph, and generate a drop-off report painted on the app's real screenshots.",
+  "description": "Agent skill for integrating Atlas Drop-off: install the @ethanzhoucool/atlas-analytics Expo/React Native SDK, wire AtlasProvider with a PostHog key and Revyl Atlas app id, verify atlas_screen events, build a screen-map.json against the live Atlas graph, and generate a drop-off report painted on the app's real screenshots.",
   "organization": {
     "name": "Revyl",
     "url": "https://revyl.com"

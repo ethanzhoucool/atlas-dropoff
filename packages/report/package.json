@@ -1,5 +1,5 @@
 {
-  "name": "@revyl/atlas-report",
+  "name": "@ethanzhoucool/atlas-report",
   "version": "0.1.0",
   "description": "Turn a Revyl Atlas screen map + PostHog atlas_screen events into a single self-contained HTML drop-off report",
   "type": "module",

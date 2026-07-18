@@ -1,4 +1,4 @@
-# @revyl/atlas-analytics
+# @ethanzhoucool/atlas-analytics
 
 Tiny drop-in screen analytics for Expo & React Native.
 
@@ -18,13 +18,13 @@ funnel and paint drop-off onto your app's real screenshots from
 ## Install
 
 ```sh
-npx expo install @revyl/atlas-analytics @react-native-async-storage/async-storage
+npx expo install @ethanzhoucool/atlas-analytics @react-native-async-storage/async-storage
 ```
 
 or with npm/yarn:
 
 ```sh
-npm install @revyl/atlas-analytics @react-native-async-storage/async-storage
+npm install @ethanzhoucool/atlas-analytics @react-native-async-storage/async-storage
 ```
 
 `@react-native-async-storage/async-storage` is optional but recommended: it's
@@ -42,7 +42,7 @@ emits an `atlas_screen` event automatically. Screens are keyed by their
 ```tsx
 // app/_layout.tsx
 import { Stack } from "expo-router";
-import { AtlasProvider } from "@revyl/atlas-analytics";
+import { AtlasProvider } from "@ethanzhoucool/atlas-analytics";
 
 export default function RootLayout() {
   return (
@@ -60,7 +60,7 @@ so it's one extra line on the container:
 
 ```tsx
 import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
-import { AtlasProvider, onNavigationStateChange } from "@revyl/atlas-analytics";
+import { AtlasProvider, onNavigationStateChange } from "@ethanzhoucool/atlas-analytics";
 
 export default function App() {
   const navigationRef = useNavigationContainerRef();
@@ -90,7 +90,7 @@ container's `"state"` events instead.
 The provider still works. Call `trackScreen()` yourself:
 
 ```ts
-import { trackScreen } from "@revyl/atlas-analytics";
+import { trackScreen } from "@ethanzhoucool/atlas-analytics";
 
 trackScreen("Paywall", { title: "Paywall" });
 ```
@@ -98,7 +98,7 @@ trackScreen("Paywall", { title: "Paywall" });
 ## Identify users
 
 ```ts
-import { identify, reset } from "@revyl/atlas-analytics";
+import { identify, reset } from "@ethanzhoucool/atlas-analytics";
 
 // After login: switches distinct_id to your user id and merges the
 // anonymous history into that user (via PostHog $identify).
@@ -114,7 +114,7 @@ generated once and persisted (when async-storage is available).
 ## Custom events
 
 ```ts
-import { track, flush } from "@revyl/atlas-analytics";
+import { track, flush } from "@ethanzhoucool/atlas-analytics";
 
 track("add_to_cart", { sku: "X1", qty: 2 });
 

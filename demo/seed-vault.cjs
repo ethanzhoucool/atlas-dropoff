@@ -2,7 +2,7 @@
  * Demo seeder #2 — a long KYC onboarding funnel (Vault).
  *
  * Same real pipeline as seed-crate.cjs: drives simulated onboarding sessions
- * through the actual @revyl/atlas-analytics client into PostHog project App
+ * through the actual @ethanzhoucool/atlas-analytics client into PostHog project App
  * (111361), tagged with Vault's Atlas app id. Vault is a real fintech app with
  * a 9-step KYC onboarding flow already mapped in Revyl Atlas — the canonical
  * high-drop-off funnel (SMS OTP, document capture, and liveness/selfie each

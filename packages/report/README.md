@@ -1,4 +1,4 @@
-# @revyl/atlas-report
+# @ethanzhoucool/atlas-report
 
 Turn a **Revyl Atlas** screen map + **PostHog** `atlas_screen` events into a single,
 self-contained HTML drop-off report.

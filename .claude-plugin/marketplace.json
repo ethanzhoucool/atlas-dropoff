@@ -8,7 +8,7 @@
     {
       "name": "atlas-dropoff",
       "source": "./",
-      "description": "Skill that integrates the @revyl/atlas-analytics SDK, builds a screen-map against the Revyl Atlas graph, and generates the atlas-report drop-off report.",
+      "description": "Skill that integrates the @ethanzhoucool/atlas-analytics SDK, builds a screen-map against the Revyl Atlas graph, and generates the atlas-report drop-off report.",
       "category": "analytics",
       "tags": [
         "revyl",

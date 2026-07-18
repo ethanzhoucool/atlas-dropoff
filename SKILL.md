@@ -2,7 +2,7 @@
 name: atlas-dropoff
 description: >
   Integrate Atlas Drop-off into an Expo or React Native app end-to-end: install the
-  @revyl/atlas-analytics SDK, wrap the app root in AtlasProvider, verify atlas_screen
+  @ethanzhoucool/atlas-analytics SDK, wrap the app root in AtlasProvider, verify atlas_screen
   events reach PostHog, build a screen-map.json against the app's Revyl Atlas graph,
   and generate a drop-off report painted on the app's real screenshots. Use when the
   user says "integrate Atlas Drop-off", "add drop-off analytics", "show onboarding
@@ -15,7 +15,7 @@ description: >
 
 You are integrating Atlas Drop-off into the user's mobile app. Two pieces ship in this repo:
 
-- `@revyl/atlas-analytics` (`packages/sdk/`): a tiny Expo/React Native SDK. No native modules, works in Expo Go. It emits one `atlas_screen` PostHog event per screen view.
+- `@ethanzhoucool/atlas-analytics` (`packages/sdk/`): a tiny Expo/React Native SDK. No native modules, works in Expo Go. It emits one `atlas_screen` PostHog event per screen view.
 - `atlas-report` (`packages/report/`): a Node CLI that fetches the app's Revyl Atlas map, queries PostHog for `atlas_screen` events, and renders a self-contained `report.html` showing drop-off on the app's real screenshots.
 
 The join key is the `screen` property on each event. Your job is to wire the SDK, then map the app's route keys to Atlas node names so the report can paint numbers onto the right screenshots.
@@ -78,7 +78,7 @@ Use the Atlas app **UUID** (from `revyl atlas apps`) as `atlasAppId`. The report
 **Expo Router** (`app/_layout.tsx`): wrap the root layout. That's the whole wiring: the SDK auto-tracks via `useSegments()`, which emits **collapsed route patterns** (`/product/[id]`, not `/product/42`), so dynamic routes don't fragment the funnel.
 
 ```tsx
-import { AtlasProvider } from '@revyl/atlas-analytics';
+import { AtlasProvider } from '@ethanzhoucool/atlas-analytics';
 
 export default function RootLayout() {
   return (
@@ -95,7 +95,7 @@ export default function RootLayout() {
 **React Navigation** is NOT auto-detected. Wire the navigation ref with `useAtlasNavigationTracking`:
 
 ```tsx
-import { AtlasProvider, useAtlasNavigationTracking } from '@revyl/atlas-analytics';
+import { AtlasProvider, useAtlasNavigationTracking } from '@ethanzhoucool/atlas-analytics';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 
 function Navigation() {

@@ -1,5 +1,5 @@
 {
-  "_note": "Real per-screen unique users (count(DISTINCT person_id), last 24h) for the Vault KYC onboarding funnel, seeded through the @revyl/atlas-analytics SDK into PostHog project App (111361), atlas_app_id = Vault. Onboarding is strictly linear, so transitions/leavers are the next-step reach.",
+  "_note": "Real per-screen unique users (count(DISTINCT person_id), last 24h) for the Vault KYC onboarding funnel, seeded through the @ethanzhoucool/atlas-analytics SDK into PostHog project App (111361), atlas_app_id = Vault. Onboarding is strictly linear, so transitions/leavers are the next-step reach.",
   "date_range": "Last 24 hours",
   "screens": {
     "/onboarding/welcome": { "users": 1892, "events": 1892 },

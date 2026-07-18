@@ -1,5 +1,5 @@
 /**
- * @revyl/atlas-analytics — tiny drop-in screen analytics for Expo & React
+ * @ethanzhoucool/atlas-analytics — tiny drop-in screen analytics for Expo & React
  * Native, shaped for Revyl Atlas drop-off reports.
  *
  * Typical integration is just:

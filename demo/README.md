@@ -1,6 +1,6 @@
 # Demos: real end-to-end drop-off reports
 
-These aren't mockups. Each was produced by the real pipeline: simulated sessions driven through the *actual* `@revyl/atlas-analytics` client (`packages/sdk/dist`) into PostHog project **App** (`111361`), then rendered by `atlas-report` against a real Revyl Atlas map + screenshots.
+These aren't mockups. Each was produced by the real pipeline: simulated sessions driven through the *actual* `@ethanzhoucool/atlas-analytics` client (`packages/sdk/dist`) into PostHog project **App** (`111361`), then rendered by `atlas-report` against a real Revyl Atlas map + screenshots.
 
 | Report | App | Funnel | Result |
 | --- | --- | --- | --- |
