@@ -64,8 +64,15 @@ export class EventAccumulator {
   private readonly ids = new Map<string, number>();
   private readonly names: string[] = [];
   private readonly users = new Map<string, Timeline>();
-  /** Anonymous key → identified user id, learned from events carrying both. */
-  private readonly aliases = new Map<string, string>();
+  /**
+   * Anonymous key → the identity it was seen with, learned from events
+   * carrying both ids. Keyed by the EARLIEST such event: a shared device
+   * (a demo iPad, a family tablet) joins the first identity it saw, matching
+   * how Mixpanel's simplified merge builds a cluster. Picking by timestamp
+   * rather than arrival order also keeps the result independent of the order
+   * an export happens to stream in.
+   */
+  private readonly aliases = new Map<string, { userId: string; timeMs: number }>();
   private merged = false;
   private total = 0;
   private droppedEvents = 0;
@@ -98,8 +105,8 @@ export class EventAccumulator {
     // under every spelling the anonymous events might have used, so the
     // pre-login timeline can be folded in at finalize time.
     if (event.deviceId && event.userId && event.deviceId !== event.userId) {
-      this.aliases.set(event.deviceId, event.userId);
-      this.aliases.set(`$device:${event.deviceId}`, event.userId);
+      this.noteAlias(event.deviceId, event.userId, event.timeMs);
+      this.noteAlias(`$device:${event.deviceId}`, event.userId, event.timeMs);
       this.merged = false;
     }
     let timeline = this.users.get(event.user);
@@ -121,6 +128,31 @@ export class EventAccumulator {
     this.total++;
   }
 
+  private noteAlias(key: string, userId: string, timeMs: number): void {
+    const existing = this.aliases.get(key);
+    if (!existing || timeMs < existing.timeMs) {
+      this.aliases.set(key, { userId, timeMs });
+    }
+  }
+
+  /**
+   * Follow an alias to the end of its chain. Identities chain in practice —
+   * device → email → uuid after an id migration — and folding only one hop
+   * would leave an intermediate key that a later fold could resurrect,
+   * splitting one person in two. The `seen` set makes a cyclic pair
+   * terminate instead of spinning.
+   */
+  private resolveAlias(key: string): string {
+    let current = key;
+    const seen = new Set<string>();
+    for (;;) {
+      const next = this.aliases.get(current)?.userId;
+      if (next === undefined || next === current || seen.has(next)) return current;
+      seen.add(current);
+      current = next;
+    }
+  }
+
   /**
    * Fold every anonymous timeline into the person it turned out to belong to,
    * then sort each timeline by time. Exports arrive in arbitrary order, and
@@ -129,7 +161,11 @@ export class EventAccumulator {
   private finalize(): void {
     if (!this.merged) {
       this.merged = true;
-      for (const [anonKey, userId] of this.aliases) {
+      // Resolve to terminal ids FIRST, so no fold can land on a key that a
+      // later fold will move again — that made the outcome depend on the
+      // order events happened to arrive in.
+      for (const anonKey of [...this.aliases.keys()]) {
+        const userId = this.resolveAlias(anonKey);
         const anon = this.users.get(anonKey);
         if (!anon || anonKey === userId) continue;
         const target = this.users.get(userId);
@@ -305,10 +341,10 @@ export function parseEventLine(
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const row = raw as Record<string, unknown>;
-  const props =
-    typeof row.properties === 'object' && row.properties !== null
-      ? (row.properties as Record<string, unknown>)
-      : row;
+  // PostHog/Mixpanel nest under `properties`; Amplitude's export nests under
+  // `event_properties` and names the event `event_type`. Supporting both is
+  // what lets any vendor's export be fed straight to --events.
+  const props = container(row.properties) ?? container(row.event_properties) ?? row;
   // Identity and timing live inside `properties` for some exports (Mixpanel,
   // PostHog query rows) and on the envelope for others — the SDK's own
   // canonical event puts `screen` in properties but `distinct_id`/`device_id`/
@@ -317,7 +353,12 @@ export function parseEventLine(
   const field = (key: string): unknown => props[key] ?? row[key];
 
   const eventName = opts.eventName ?? 'atlas_screen';
-  const name = typeof row.event === 'string' ? row.event : undefined;
+  const name =
+    typeof row.event === 'string'
+      ? row.event
+      : typeof row.event_type === 'string'
+        ? row.event_type
+        : undefined;
   if (name !== undefined && name !== eventName) return null;
 
   if (opts.appId) {
@@ -328,16 +369,17 @@ export function parseEventLine(
   const screen = field('screen');
   if (typeof screen !== 'string' || screen === '') return null;
 
-  const userId = pickString(field('$user_id')) ?? pickString(field('user_id'));
-  const deviceId = pickString(field('$device_id')) ?? pickString(field('device_id'));
+  const userId = pickId(field('$user_id')) ?? pickId(field('user_id'));
+  const deviceId = pickId(field('$device_id')) ?? pickId(field('device_id'));
   // distinct_id first: it's the vendor's own answer, already merged where the
   // vendor does that. userId/deviceId below let us merge it ourselves where
   // it doesn't.
   const user =
-    pickString(field('distinct_id')) ??
+    pickId(field('distinct_id')) ??
     userId ??
     deviceId ??
-    pickString(field('person_id'));
+    pickId(field('person_id')) ??
+    pickId(field('amplitude_id'));
   if (!user) return null;
 
   const prevRaw = field('prev_screen');
@@ -347,14 +389,25 @@ export function parseEventLine(
     user,
     screen,
     prevScreen,
-    timeMs: parseTime(field('time') ?? field('timestamp')),
+    // `event_time` is Amplitude's spelling.
+    timeMs: parseTime(field('time') ?? field('timestamp') ?? field('event_time')),
     deviceId,
     userId,
   };
 }
 
-function pickString(value: unknown): string | undefined {
-  return typeof value === 'string' && value !== '' ? value : undefined;
+/** A plain object, or undefined — used to find the properties container. */
+function container(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** An id as a string. Numbers count: some exports emit numeric user ids. */
+function pickId(value: unknown): string | undefined {
+  if (typeof value === 'string') return value === '' ? undefined : value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return undefined;
 }
 
 /**

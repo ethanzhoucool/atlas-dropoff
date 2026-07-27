@@ -63,7 +63,8 @@ aggregates in-process. Its segmentation API only reports uniques *per time
 unit*, and summing days over-counts returning users — there is no
 range-collapsed unique to ask for. Counting locally is both correct and enough
 to compute a true sequential funnel. Use `--max-events` to bound a very large
-window.
+window. `--timeout` bounds how long the stream may go *silent*, not the total
+download, so a legitimately long export isn't killed mid-flight.
 
 ## Environment variables
 
@@ -207,10 +208,12 @@ destinations and bias exit rates low.
 
 ## `--events` offline schema
 
-One JSON object per line. Both the vendor-export envelope and a flat row work,
-and the id falls back through `distinct_id` → `$user_id` → `user_id` →
-`$device_id` → `device_id` → `person_id`, so most exports need no reshaping.
-`time` may be seconds, milliseconds, or an ISO string.
+One JSON object per line. PostHog/Mixpanel envelopes (`event` + `properties`),
+Amplitude's (`event_type` + `event_properties`), and a flat row all work. The
+id falls back through `distinct_id` → `$user_id` → `user_id` → `$device_id` →
+`device_id` → `person_id` → `amplitude_id`, and is accepted as a string or a
+number, so most exports need no reshaping. The timestamp may be `time`,
+`timestamp` or `event_time`, in seconds, milliseconds, or as an ISO string.
 
 ```jsonl
 {"event":"atlas_screen","properties":{"screen":"/","prev_screen":null,"distinct_id":"u_001","atlas_app_id":"<uuid>","time":1785110400}}
@@ -226,6 +229,9 @@ user id (`$device_id` + `$user_id`, or `device_id` + `user_id`), that pairing is
 recorded and the anonymous timeline is folded into the person at query time. So
 a user who signs up mid-funnel counts once, whether or not the export already
 resolved them — otherwise the login step would look like total drop-off.
+Chains resolve transitively (device → email → uuid after an id migration), and
+a device shared by two people joins whichever identity it saw first by
+timestamp, so the result never depends on the order the export streams in.
 
 ## `--counts` offline schema
 

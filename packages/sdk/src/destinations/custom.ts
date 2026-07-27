@@ -2,9 +2,12 @@
  * Custom destination — the escape hatch.
  *
  * Anything the built-ins don't cover (Segment, RudderStack, Snowplow, your own
- * collector, a warehouse) is a `send` function away. The client still owns
- * batching, dedupe and retries: throw (or resolve `false`) to have the batch
- * requeued for the next flush.
+ * collector, a warehouse) is a `send` function away. The client owns batching
+ * and retries: throw (or resolve `false`) to have the batch requeued for the
+ * next flush. Only the chunks you haven't accepted are retried, but delivery
+ * is still at-least-once — a `send` that reaches the collector and then fails
+ * on the way back will be retried. Dedupe on the receiving end by
+ * `insert_id`, which is stable per capture.
  */
 
 import type { AtlasCapturedEvent } from "../types";

@@ -403,3 +403,96 @@ test('amplitude: warns when ANY grouped response hits the row cap', async () => 
   assert.match(joined, /5 leaver groups — hit the limit of 5/);
   assert.equal(/screen groups — hit the limit/.test(joined), false);
 });
+
+test('mixpanel: a stream that stalls mid-export aborts with an actionable error', async () => {
+  const { mixpanelSource } = await sourcesP;
+  // One line arrives, then the connection goes quiet forever. The stall timer
+  // must fire and the abort must surface as a Mixpanel-shaped message, not a
+  // bare TimeoutError from inside the stream loop.
+  globalThis.fetch = (url, init) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      statusText: '',
+      text: () => Promise.resolve(''),
+      body: {
+        getReader() {
+          let sentFirst = false;
+          return {
+            read() {
+              if (!sentFirst) {
+                sentFirst = true;
+                const line = JSON.stringify({
+                  event: 'atlas_screen',
+                  properties: { screen: '/a', distinct_id: 'u1', time: 1 },
+                });
+                return Promise.resolve({
+                  done: false,
+                  value: new TextEncoder().encode(line + '\n'),
+                });
+              }
+              // Never resolves — only the abort signal ends this.
+              return new Promise((_resolve, reject) => {
+                init.signal.addEventListener('abort', () => {
+                  const err = new Error('aborted');
+                  err.name = 'AbortError';
+                  reject(err);
+                });
+              });
+            },
+          };
+        },
+      },
+    });
+
+  const t0 = Date.now();
+  await assert.rejects(
+    () => mixpanelSource({
+      username: 'sa', secret: 'sk', projectId: '42', appId: 'app', days: 7,
+      timeoutMs: 300,
+    }).fetchCounts(),
+    /Mixpanel export stalled for 0s mid-stream after 1 events/,
+  );
+  assert.ok(Date.now() - t0 < 5000, 'must abort promptly, not hang the CLI');
+});
+
+test('mixpanel: a long but healthy stream is NOT killed by the timeout', async () => {
+  const { mixpanelSource } = await sourcesP;
+  // The timeout bounds silence, not total duration: a real export of a busy
+  // app legitimately streams for minutes.
+  const LINES = 40;
+  globalThis.fetch = () =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      statusText: '',
+      text: () => Promise.resolve(''),
+      body: {
+        getReader() {
+          let n = 0;
+          return {
+            read() {
+              if (n >= LINES) return Promise.resolve({ done: true });
+              const line = JSON.stringify({
+                event: 'atlas_screen',
+                properties: { screen: '/a', distinct_id: `u${n++}`, time: 1 },
+              });
+              // Each chunk takes a while, but never longer than the timeout.
+              return new Promise(resolve =>
+                setTimeout(
+                  () => resolve({ done: false, value: new TextEncoder().encode(line + '\n') }),
+                  15,
+                ),
+              );
+            },
+          };
+        },
+      },
+    });
+
+  const counts = await mixpanelSource({
+    username: 'sa', secret: 'sk', projectId: '42', appId: 'app', days: 7,
+    timeoutMs: 120, // far shorter than the whole 600ms download
+  }).fetchCounts();
+  assert.equal(counts.screens['/a'].users, LINES);
+});

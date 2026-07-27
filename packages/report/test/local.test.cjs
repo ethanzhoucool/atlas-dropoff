@@ -312,3 +312,69 @@ test("nested properties still win over the envelope for the same key", async () 
   });
   assert.equal(parseEventLine(line).user, "nested");
 });
+
+test("a chained identity (device -> email -> uuid) merges to one person, either arrival order", async () => {
+  const { EventAccumulator } = await localP;
+  // One human across an id migration. Exports carry no order guarantee, so
+  // folding one hop at a time used to resurrect the intermediate key and
+  // split them in two — with the funnel reading 0% past their own first step.
+  const rows = [
+    { user: "$device:dev-1", screen: "/start", prevScreen: null, timeMs: 10_000, deviceId: "dev-1" },
+    { user: "old@example.com", screen: "/login", prevScreen: "/start", timeMs: 20_000, deviceId: "dev-1", userId: "old@example.com" },
+    { user: "uuid-9", screen: "/home", prevScreen: "/login", timeMs: 30_000, deviceId: "old@example.com", userId: "uuid-9" },
+  ];
+  for (const order of [rows, [...rows].reverse()]) {
+    const acc = new EventAccumulator();
+    for (const r of order) acc.add(r);
+    assert.equal(acc.toCounts("events-file").screens["/start"].users, 1);
+    assert.deepEqual(
+      acc.funnel([["/start"], ["/login"], ["/home"]], 86400),
+      [1, 1, 1],
+      "chain must resolve to one person regardless of arrival order"
+    );
+  }
+});
+
+test("a shared device joins the identity it saw FIRST, by timestamp not arrival", async () => {
+  const { EventAccumulator } = await localP;
+  // A demo tablet: two people sign in on it. The anonymous history belongs to
+  // whoever was there first, not whoever the export happened to list last.
+  const early = { user: "u_first", screen: "/b", prevScreen: "/a", timeMs: 20_000, deviceId: "kiosk", userId: "u_first" };
+  const late = { user: "u_second", screen: "/b", prevScreen: "/a", timeMs: 90_000, deviceId: "kiosk", userId: "u_second" };
+  const anon = { user: "kiosk", screen: "/a", prevScreen: null, timeMs: 10_000, deviceId: "kiosk" };
+
+  for (const order of [[anon, early, late], [late, early, anon], [early, late, anon]]) {
+    const acc = new EventAccumulator();
+    for (const r of order) acc.add(r);
+    assert.deepEqual(acc.funnel([["/a"], ["/b"]], 86400), [1, 1]);
+    // u_second never saw /a, so exactly one person completes the funnel.
+    assert.equal(acc.toCounts("events-file").screens["/a"].users, 1);
+  }
+});
+
+test("parseEventLine reads an Amplitude export row (event_type / event_properties)", async () => {
+  const { parseEventLine } = await localP;
+  const line = JSON.stringify({
+    event_type: "atlas_screen",
+    user_id: "u1",
+    device_id: "d1",
+    amplitude_id: 123456789,
+    event_time: "2026-07-27 12:34:56.789",
+    event_properties: { screen: "/home", prev_screen: null, atlas_app_id: "app-1" },
+  });
+  const parsed = parseEventLine(line, { appId: "app-1" });
+  assert.ok(parsed, "an Amplitude export row must parse");
+  assert.equal(parsed.user, "u1");
+  assert.equal(parsed.screen, "/home");
+  assert.equal(parsed.deviceId, "d1");
+  assert.ok(parsed.timeMs > 0);
+});
+
+test("numeric ids are accepted, not treated as missing", async () => {
+  const { parseEventLine } = await localP;
+  const line = JSON.stringify({
+    event: "atlas_screen",
+    properties: { screen: "/home", distinct_id: 90210 },
+  });
+  assert.equal(parseEventLine(line).user, "90210");
+});

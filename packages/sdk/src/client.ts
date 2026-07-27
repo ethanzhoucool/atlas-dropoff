@@ -288,13 +288,25 @@ export class AtlasClient {
   /** Send everything queued right now. Resolves when the attempt finishes. */
   async flush(): Promise<void> {
     if (this.flushing) {
-      // Piggyback on the in-flight flush so callers (and shutdown()) actually
-      // wait for the attempt to finish instead of resolving immediately.
-      return this.flushPromise;
+      // Wait out the in-flight attempt — but do NOT stop there. It spliced the
+      // queue before this caller's events existed, so piggybacking alone would
+      // silently skip them. That matters most for the background flush: the
+      // last screen of a session would sit in memory and die with the process.
+      await this.flushPromise;
+      if (this.flushing || !this.hasWork()) return;
     }
     this.flushing = true;
     this.flushPromise = this.doFlush();
     return this.flushPromise;
+  }
+
+  /** Anything captured, or held back by a previous failure? */
+  private hasWork(): boolean {
+    if (this.queue.length > 0) return true;
+    for (const buffered of this.pending.values()) {
+      if (buffered.length > 0) return true;
+    }
+    return false;
   }
 
   private async doFlush(): Promise<void> {
@@ -304,8 +316,7 @@ export class AtlasClient {
       // identityReady never rejects, so this is safe.
       await this.identityReady;
       const batch = this.queue.splice(0, this.queue.length);
-      const hasPending = [...this.pending.values()].some((b) => b.length > 0);
-      if (batch.length === 0 && !hasPending) {
+      if (batch.length === 0 && !this.hasWork()) {
         return;
       }
       // Stamp any events captured before the persisted ids finished loading.
@@ -334,11 +345,11 @@ export class AtlasClient {
           if (events.length === 0) return;
           this.pending.set(destination.name, []);
 
-          const verdict = await this.deliver(destination, events);
+          const { verdict, unsent } = await this.deliver(destination, events);
           if (verdict === "retry") {
-            this.requeue(destination.name, events);
+            this.requeue(destination.name, unsent);
             this.warnDebug(
-              `${destination.name}: delivery failed — ${events.length} event(s) requeued`
+              `${destination.name}: delivery failed — ${unsent.length} event(s) requeued`
             );
           } else if (verdict === "drop") {
             this.warnDebug(
@@ -354,25 +365,33 @@ export class AtlasClient {
     }
   }
 
-  /** One delivery attempt for one destination. Never throws. */
+  /**
+   * One delivery attempt for one destination. Never throws. `unsent` is what
+   * should be requeued if the verdict is `retry`.
+   */
   private async deliver(
     destination: AtlasDestination,
     events: AtlasCapturedEvent[]
-  ): Promise<AtlasDeliveryVerdict> {
+  ): Promise<{ verdict: AtlasDeliveryVerdict; unsent: AtlasCapturedEvent[] }> {
     if (destination.send) {
       // Honour the destination's own per-call cap — a collector with a payload
       // limit needs it, and it's part of the documented contract.
+      let sent = 0;
       for (const part of chunk(events, destination.maxBatchSize)) {
         let verdict: AtlasDeliveryVerdict;
         try {
           verdict = await destination.send(part);
         } catch (error) {
           this.warnDebug(`${destination.name}: send() threw`, error);
-          return "retry";
+          return { verdict: "retry", unsent: events.slice(sent) };
         }
-        if (verdict !== "ok") return verdict;
+        // Only the chunks that haven't been handed over are retried. Unlike
+        // the vendor endpoints, a custom collector has no insert-id dedupe to
+        // fall back on, so redelivering an accepted chunk would double-count.
+        if (verdict !== "ok") return { verdict, unsent: events.slice(sent) };
+        sent += part.length;
       }
-      return "ok";
+      return { verdict: "ok", unsent: [] };
     }
 
     let requests: AtlasDestinationRequest[];
@@ -385,20 +404,20 @@ export class AtlasClient {
         `${destination.name}: could not build the request — dropping batch`,
         error
       );
-      return "drop";
+      return { verdict: "drop", unsent: [] };
     }
     if (requests.length === 0) {
-      return "ok"; // nothing this vendor wants from these events
+      return { verdict: "ok", unsent: [] }; // nothing this vendor wants
     }
 
     for (const request of requests) {
       const verdict = await this.send(destination, request);
-      // A partial failure retries the whole batch for this destination; the
-      // per-event insert ids make the redelivered half a dedupe, not a double
-      // count.
-      if (verdict !== "ok") return verdict;
+      // A partial failure retries the whole batch for this destination: the
+      // vendor requests don't map one-to-one onto event ranges. The per-event
+      // insert ids make the redelivered half a dedupe, not a double count.
+      if (verdict !== "ok") return { verdict, unsent: events };
     }
-    return "ok";
+    return { verdict: "ok", unsent: [] };
   }
 
   private async send(

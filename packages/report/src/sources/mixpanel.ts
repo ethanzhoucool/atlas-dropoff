@@ -98,6 +98,14 @@ export function mixpanelSource(
       .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
       .join('&')}`;
 
+    // The timeout bounds how long we wait for DATA, not the whole download: a
+    // real export of a busy app runs to hundreds of MB and legitimately
+    // streams for minutes, so `AbortSignal.timeout` over the entire body
+    // would kill exactly the workload this source exists for. The timer is
+    // re-armed on every line below, so a genuinely dead connection still ends.
+    const abort = new AbortController();
+    const stall = setTimeout(() => abort.abort(), timeoutMs);
+
     let res: Response;
     try {
       res = await fetch(url, {
@@ -105,9 +113,10 @@ export function mixpanelSource(
           Authorization: basicAuth(opts.username, opts.secret),
           Accept: 'application/x-ndjson',
         },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: abort.signal,
       });
     } catch (err) {
+      clearTimeout(stall);
       const e = err as Error;
       if (e.name === 'TimeoutError' || e.name === 'AbortError') {
         throw new Error(
@@ -121,6 +130,7 @@ export function mixpanelSource(
       );
     }
     if (!res.ok) {
+      clearTimeout(stall);
       const body = (await res.text().catch(() => '')).slice(0, 400);
       const hint =
         res.status === 401 || res.status === 403
@@ -134,14 +144,32 @@ export function mixpanelSource(
     }
 
     let capped = false;
-    for await (const line of jsonlLines(res)) {
-      const event = parseEventLine(line, { appId: opts.appId, eventName: EVENT_NAME });
-      if (!event) continue;
-      accumulator.add(event);
-      if (accumulator.eventCount >= maxEvents) {
-        capped = true;
-        break;
+    try {
+      for await (const line of jsonlLines(res)) {
+        // Progress resets the clock: only a stalled stream should abort.
+        stall.refresh();
+        const event = parseEventLine(line, { appId: opts.appId, eventName: EVENT_NAME });
+        if (!event) continue;
+        accumulator.add(event);
+        if (accumulator.eventCount >= maxEvents) {
+          capped = true;
+          break;
+        }
       }
+    } catch (err) {
+      // Without this the raw AbortError escapes the friendly-error block
+      // above, naming neither Mixpanel nor the fix.
+      const e = err as Error;
+      throw new Error(
+        e.name === 'TimeoutError' || e.name === 'AbortError'
+          ? `Mixpanel export stalled for ${Math.round(timeoutMs / 1000)}s mid-stream ` +
+            `after ${accumulator.eventCount.toLocaleString('en-US')} events — raise --timeout, ` +
+            'narrow --days, or lower --max-events.'
+          : `Mixpanel export failed while streaming (${e.message}) — ` +
+            'retry, or run offline with --counts <file>.',
+      );
+    } finally {
+      clearTimeout(stall);
     }
     if (capped) {
       log(

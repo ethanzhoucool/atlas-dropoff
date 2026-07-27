@@ -404,3 +404,108 @@ test("customDestination maxBatchSize actually chunks the send", async () => {
     await c.shutdown();
   }
 });
+
+test("a flush during an in-flight flush still sends what was captured meanwhile", async () => {
+  const { client } = loadFresh();
+  // The background-flush path: the app is backgrounded mid-request, right
+  // after the user's last screen. Piggybacking on the in-flight attempt would
+  // skip that screen — the attempt spliced the queue before it existed — and
+  // the OS then kills the process with it still in memory.
+  let release;
+  let firstFetchStarted;
+  const started = new Promise((resolve) => {
+    firstFetchStarted = resolve;
+  });
+  const sent = [];
+  globalThis.fetch = (url, options) => {
+    const payload = JSON.parse(options.body);
+    if (sent.length === 0 && !release) {
+      return new Promise((resolve) => {
+        release = () => {
+          sent.push(payload);
+          resolve({ ok: true, status: 200, text: () => Promise.resolve("") });
+        };
+        firstFetchStarted();
+      });
+    }
+    sent.push(payload);
+    return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("") });
+  };
+  const c = newClient(client.AtlasClient, {
+    posthog: { apiKey: "phc_x", host: "https://posthog.test" },
+  });
+  try {
+    c.trackScreen("/first");
+    const inFlight = c.flush();
+    await started; // the request is genuinely in flight now
+    c.trackScreen("/checkout-done"); // captured DURING the flush
+    const background = c.flush();
+    release();
+    await Promise.all([inFlight, background]);
+
+    const screens = sent.flatMap((p) => p.batch.map((e) => e.properties.screen));
+    assert.deepEqual(screens, ["/first", "/checkout-done"]);
+  } finally {
+    await c.shutdown();
+  }
+});
+
+test("a failed chunk requeues only the unsent events, never redelivering", async () => {
+  const { sdk, client } = loadFresh();
+  fakeFetch([{ status: 200 }]);
+  // A custom collector has no insert-id dedupe to lean on, so redelivering an
+  // already-accepted chunk would double-count outright.
+  const delivered = [];
+  let failSecondChunk = true;
+  const c = newClient(client.AtlasClient, {
+    destinations: [
+      sdk.customDestination({
+        name: "capped",
+        maxBatchSize: 2,
+        async send(batch) {
+          if (failSecondChunk && batch[0].properties.screen === "/c") {
+            failSecondChunk = false;
+            throw new Error("collector hiccup");
+          }
+          delivered.push(...batch.map((e) => e.properties.screen));
+        },
+      }),
+    ],
+  });
+  try {
+    for (const s of ["/a", "/b", "/c", "/d"]) c.trackScreen(s);
+    await c.flush(); // chunk 1 lands, chunk 2 throws
+    assert.deepEqual(delivered, ["/a", "/b"]);
+
+    await c.flush(); // only the unsent tail is retried
+    assert.deepEqual(delivered, ["/a", "/b", "/c", "/d"]);
+  } finally {
+    await c.shutdown();
+  }
+});
+
+test("vendor-reserved $ properties pass through; only the PostHog dialect is stripped", async () => {
+  const { client } = loadFresh();
+  const { calls } = fakeFetch([{ status: 200, text: "1" }]);
+  const c = newClient(client.AtlasClient, {
+    amplitude: { apiKey: "amp_key" },
+    mixpanel: { token: "mp_token" },
+  });
+  try {
+    // $city is Mixpanel/Amplitude's own reserved spelling — dropping every
+    // "$" key would silently discard it.
+    c.track("checkout", { $city: "Berlin", plan: "pro" });
+    await c.flush();
+
+    const amp = calls.find((x) => x.url.endsWith("/2/httpapi")).body.events[0];
+    assert.equal(amp.event_properties.$city, "Berlin");
+    assert.equal(amp.event_properties.plan, "pro");
+
+    const mp = calls.find((x) => x.url.endsWith("/track")).body[0];
+    assert.equal(mp.properties.$city, "Berlin");
+    // The PostHog-only spellings still never leave.
+    assert.equal("$screen_name" in mp.properties, false);
+  } finally {
+    await c.shutdown();
+  }
+});

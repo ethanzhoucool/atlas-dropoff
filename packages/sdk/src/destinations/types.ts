@@ -71,17 +71,29 @@ export function chunk<T>(items: T[], size: number | undefined): T[][] {
 }
 
 /**
- * Event properties minus the PostHog-specific `$`-prefixed keys. Every vendor
- * gets the frozen contract fields (screen, prev_screen, atlas_app_id,
- * session_id, sdk, …) plus whatever custom properties the app passed; only the
- * PostHog dialect (`$set`, `$anon_distinct_id`, `$screen_name`) is stripped.
+ * The PostHog-only spellings the SDK adds. Named explicitly rather than
+ * filtering every `$`-prefixed key: Amplitude and Mixpanel have reserved
+ * `$` properties of their own (`$city`, `$os`, …), and an app that sets one
+ * through `track()` should reach the vendor that understands it.
+ */
+const POSTHOG_DIALECT = new Set([
+  "$set",
+  "$set_once",
+  "$anon_distinct_id",
+  "$screen_name",
+]);
+
+/**
+ * Event properties minus the PostHog dialect. Every vendor gets the frozen
+ * contract fields (screen, prev_screen, atlas_app_id, session_id, sdk, …)
+ * plus whatever custom properties the app passed.
  */
 export function vendorProperties(
   properties: Record<string, unknown>
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(properties)) {
-    if (key.charCodeAt(0) === 36 /* $ */) continue;
+    if (POSTHOG_DIALECT.has(key)) continue;
     out[key] = value;
   }
   return out;
