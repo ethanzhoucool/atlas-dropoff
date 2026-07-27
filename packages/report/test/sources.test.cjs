@@ -378,3 +378,28 @@ test('createSource: region and host route to the right endpoint', async () => {
   await source.fetchCounts().catch(() => {});
   assert.ok(calls[0].url.startsWith('https://analytics.eu.amplitude.com/'));
 });
+
+test('amplitude: warns when ANY grouped response hits the row cap', async () => {
+  const { amplitudeSource } = await sourcesP;
+  const big = (n, two) =>
+    segmentation(
+      Array.from({ length: n }, (_, i) => ({
+        labels: two ? [`/s${i}`, `/t${i}`] : `/s${i}`,
+        value: n - i,
+      })),
+    );
+  // Transitions are pairwise, so they hit the cap long before screens do —
+  // a silently truncated tail there distorts the path and every exit rate.
+  stubFetch([
+    { body: big(3) },
+    { body: big(3) },
+    { body: big(5, true) },
+    { body: big(5) },
+  ]);
+  const lines = [];
+  await amplitudeSource({ ...AMPLITUDE_OPTS, limit: 5 }, l => lines.push(l)).fetchCounts();
+  const joined = lines.join('\n');
+  assert.match(joined, /5 transition groups — hit the limit of 5/);
+  assert.match(joined, /5 leaver groups — hit the limit of 5/);
+  assert.equal(/screen groups — hit the limit/.test(joined), false);
+});

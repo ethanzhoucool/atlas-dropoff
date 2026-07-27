@@ -17,7 +17,7 @@ import type {
   AtlasDestination,
   AtlasDestinationRequest,
 } from "./destinations/types";
-import { defaultClassify } from "./destinations/types";
+import { chunk, defaultClassify } from "./destinations/types";
 import { generateId, getOrCreateInstallId } from "./id";
 import { createStorage } from "./storage";
 import type { AtlasStorage } from "./storage";
@@ -316,6 +316,13 @@ export class AtlasClient {
         if (!item.distinct_id) {
           item.distinct_id = this.distinctId ?? item.device_id;
         }
+        // A returning user's first screen is often captured before the stored
+        // identified id loads. By now it's known: anything that isn't the
+        // install id IS the user id, and without this the vendors that key
+        // identity off `user_id` would file that screen as anonymous.
+        if (item.user_id === null && item.distinct_id !== item.device_id) {
+          item.user_id = item.distinct_id;
+        }
       }
 
       // Every destination attempts independently: one vendor being down can't
@@ -353,12 +360,19 @@ export class AtlasClient {
     events: AtlasCapturedEvent[]
   ): Promise<AtlasDeliveryVerdict> {
     if (destination.send) {
-      try {
-        return await destination.send(events);
-      } catch (error) {
-        this.warnDebug(`${destination.name}: send() threw`, error);
-        return "retry";
+      // Honour the destination's own per-call cap — a collector with a payload
+      // limit needs it, and it's part of the documented contract.
+      for (const part of chunk(events, destination.maxBatchSize)) {
+        let verdict: AtlasDeliveryVerdict;
+        try {
+          verdict = await destination.send(part);
+        } catch (error) {
+          this.warnDebug(`${destination.name}: send() threw`, error);
+          return "retry";
+        }
+        if (verdict !== "ok") return verdict;
       }
+      return "ok";
     }
 
     let requests: AtlasDestinationRequest[];
@@ -392,9 +406,12 @@ export class AtlasClient {
     request: AtlasDestinationRequest
   ): Promise<AtlasDeliveryVerdict> {
     let response: Response;
+    let body = "";
     // Abort a stalled request after requestTimeout — without this, a hung
     // connection would never settle, `flushing` would stay true forever,
     // and delivery would be dead for the rest of the process lifetime.
+    // The timer stays armed across the body read too: headers can arrive
+    // promptly and the body then stall, which would hang just as badly.
     const abort = new AbortController();
     const abortTimer = setTimeout(
       () => abort.abort(),
@@ -407,6 +424,12 @@ export class AtlasClient {
         body: request.body,
         signal: abort.signal,
       });
+      if (destination.inspectBody && typeof response.text === "function") {
+        // A body we can't read is a verdict we can't reach. Retrying is the
+        // safe call — treating it as success would silently drop the batch,
+        // and the per-event insert ids make a redundant retry a dedupe.
+        body = await response.text();
+      }
     } catch (error) {
       // Includes the AbortError from the timeout above — treated like any
       // transient network failure: keep the events for the next flush.
@@ -416,10 +439,6 @@ export class AtlasClient {
       clearTimeout(abortTimer);
     }
 
-    let body = "";
-    if (destination.inspectBody && typeof response.text === "function") {
-      body = await response.text().catch(() => "");
-    }
     const classify = destination.classify ?? defaultClassify;
     const verdict = classify(response.status, body);
     if (verdict !== "ok") {

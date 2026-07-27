@@ -159,17 +159,31 @@ export function amplitudeSource(
         segmentation(['prev_screen'], 'uniques'),
       ]);
 
+      // Every grouped query is subject to the same cap. Transitions are the
+      // likeliest to hit it (they're pairwise), and a silently truncated tail
+      // there distorts the funnel path and every exit rate.
+      const rowsOf = (
+        payload: unknown,
+        label: string,
+      ): Array<{ labels: string[]; value: number }> => {
+        const rows = collapsedRows(payload);
+        if (rows.length >= limit) {
+          log(
+            `! Amplitude returned ${rows.length} ${label} groups — hit the limit of ${limit}, ` +
+            'so the low-volume tail was truncated and the numbers below understate it.',
+          );
+        }
+        return rows;
+      };
+
       const totalsByScreen = new Map<string, number>();
-      for (const row of collapsedRows(screenTotals)) {
+      for (const row of rowsOf(screenTotals, 'screen (totals)')) {
         const key = clean(row.labels[0]);
         if (key) totalsByScreen.set(key, row.value);
       }
 
       const screens: Record<string, ScreenCount> = {};
-      let truncated = false;
-      const uniqueRows = collapsedRows(screenUniques);
-      if (uniqueRows.length >= limit) truncated = true;
-      for (const row of uniqueRows) {
+      for (const row of rowsOf(screenUniques, 'screen')) {
         const key = clean(row.labels[0]);
         if (!key) continue;
         screens[key] = { users: row.value, events: totalsByScreen.get(key) ?? row.value };
@@ -180,15 +194,9 @@ export function amplitudeSource(
           `in the last ${opts.days} days — check the app id, the project keys, and the time window.`,
         );
       }
-      if (truncated) {
-        log(
-          `! Amplitude returned ${uniqueRows.length} screen groups — hit the limit of ${limit}, ` +
-          'so the low-volume tail was truncated.',
-        );
-      }
 
       const transitions: TransitionCount[] = [];
-      for (const row of collapsedRows(transitionRows)) {
+      for (const row of rowsOf(transitionRows, 'transition')) {
         const src = clean(row.labels[0]);
         const dst = clean(row.labels[1]);
         if (!src || !dst) continue;
@@ -196,7 +204,7 @@ export function amplitudeSource(
       }
 
       const leavers: Record<string, number> = {};
-      for (const row of collapsedRows(leaverRows)) {
+      for (const row of rowsOf(leaverRows, 'leaver')) {
         const src = clean(row.labels[0]);
         if (src) leavers[src] = row.value;
       }

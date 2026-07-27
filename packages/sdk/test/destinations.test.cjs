@@ -312,3 +312,95 @@ test("customDestination receives the canonical batch; a throw requeues it", asyn
     await c.shutdown();
   }
 });
+
+/* ── review follow-ups ──────────────────────────────────────── */
+
+test("a stalled response BODY aborts and requeues, instead of wedging delivery", async () => {
+  const { client } = loadFresh();
+  // Headers arrive fine; the body never does. Without the abort timer staying
+  // armed across the body read, flush() would never settle and delivery would
+  // be dead for the rest of the process.
+  const calls = [];
+  globalThis.fetch = (url, options) => {
+    calls.push({ url });
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => {
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        }),
+    });
+  };
+  const c = newClient(client.AtlasClient, {
+    mixpanel: { token: "mp" }, // the destination that reads bodies
+    requestTimeout: 100,
+  });
+  try {
+    c.trackScreen("/slow-body");
+    const t0 = Date.now();
+    await c.flush();
+    assert.ok(Date.now() - t0 < 5000, "flush() must settle via the abort");
+    assert.equal(calls.length, 1);
+
+    // Unreadable body → unknown verdict → keep the events.
+    globalThis.fetch = (url) => {
+      calls.push({ url });
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("1") });
+    };
+    await c.flush();
+    assert.equal(calls.length, 2);
+  } finally {
+    await c.shutdown();
+  }
+});
+
+test("a returning user's first screen is not filed as anonymous", async () => {
+  const { client } = loadFresh();
+  const { calls } = fakeFetch([{ status: 200 }]);
+  const c = newClient(client.AtlasClient, { amplitude: { apiKey: "amp_key" } });
+  try {
+    // Simulate the persisted identity resolving AFTER the first screen is
+    // captured — exactly what a cold launch does.
+    c.trackScreen("/home");
+    c.identify("user_returning");
+    await settle();
+    await c.flush();
+
+    const evt = calls[0].body.events.find(
+      (e) => e.event_properties?.screen === "/home"
+    );
+    assert.equal(evt.user_id, "user_returning");
+    assert.ok(evt.device_id, "device id still travels alongside");
+  } finally {
+    await c.shutdown();
+  }
+});
+
+test("customDestination maxBatchSize actually chunks the send", async () => {
+  const { sdk, client } = loadFresh();
+  fakeFetch([{ status: 200 }]);
+  const batches = [];
+  const c = newClient(client.AtlasClient, {
+    destinations: [
+      sdk.customDestination({
+        name: "capped",
+        maxBatchSize: 2,
+        async send(batch) {
+          batches.push(batch.length);
+        },
+      }),
+    ],
+  });
+  try {
+    for (const s of ["/a", "/b", "/c", "/d", "/e"]) c.trackScreen(s);
+    await c.flush();
+    assert.deepEqual(batches, [2, 2, 1]);
+  } finally {
+    await c.shutdown();
+  }
+});

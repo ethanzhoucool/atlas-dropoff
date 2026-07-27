@@ -280,3 +280,35 @@ test("parseEventLine surfaces the device/user pair for stitching", async () => {
   assert.equal(parsed.deviceId, "dev-1");
   assert.equal(parsed.userId, "u_9");
 });
+
+test("parseEventLine reads identity off the envelope when only `screen` is nested", async () => {
+  const { parseEventLine } = await localP;
+  // The SDK's own canonical event, i.e. what a customDestination hands to a
+  // warehouse: contract fields inside `properties`, identity outside. Reading
+  // only `properties` made every such line look user-less and skipped the file.
+  const line = JSON.stringify({
+    event: "atlas_screen",
+    distinct_id: "u_9",
+    device_id: "dev-1",
+    user_id: "u_9",
+    insert_id: "abc",
+    timestamp: "2026-07-27T00:00:00.000Z",
+    properties: { screen: "/home", prev_screen: "/welcome", atlas_app_id: "app-1" },
+  });
+  const parsed = parseEventLine(line, { appId: "app-1" });
+  assert.equal(parsed.user, "u_9");
+  assert.equal(parsed.screen, "/home");
+  assert.equal(parsed.prevScreen, "/welcome");
+  assert.equal(parsed.deviceId, "dev-1");
+  assert.equal(parsed.timeMs, Date.parse("2026-07-27T00:00:00Z"));
+});
+
+test("nested properties still win over the envelope for the same key", async () => {
+  const { parseEventLine } = await localP;
+  const line = JSON.stringify({
+    event: "atlas_screen",
+    distinct_id: "envelope",
+    properties: { screen: "/a", distinct_id: "nested" },
+  });
+  assert.equal(parseEventLine(line).user, "nested");
+});

@@ -309,39 +309,45 @@ export function parseEventLine(
     typeof row.properties === 'object' && row.properties !== null
       ? (row.properties as Record<string, unknown>)
       : row;
+  // Identity and timing live inside `properties` for some exports (Mixpanel,
+  // PostHog query rows) and on the envelope for others — the SDK's own
+  // canonical event puts `screen` in properties but `distinct_id`/`device_id`/
+  // `timestamp` on the outside. Look in both, or a custom destination's dump
+  // parses as "no user" and every line is skipped.
+  const field = (key: string): unknown => props[key] ?? row[key];
 
   const eventName = opts.eventName ?? 'atlas_screen';
   const name = typeof row.event === 'string' ? row.event : undefined;
   if (name !== undefined && name !== eventName) return null;
 
   if (opts.appId) {
-    const appId = props.atlas_app_id;
+    const appId = field('atlas_app_id');
     if (typeof appId === 'string' && appId !== opts.appId) return null;
   }
 
-  const screen = props.screen;
+  const screen = field('screen');
   if (typeof screen !== 'string' || screen === '') return null;
 
-  const userId = pickString(props.$user_id) ?? pickString(props.user_id);
-  const deviceId = pickString(props.$device_id) ?? pickString(props.device_id);
+  const userId = pickString(field('$user_id')) ?? pickString(field('user_id'));
+  const deviceId = pickString(field('$device_id')) ?? pickString(field('device_id'));
   // distinct_id first: it's the vendor's own answer, already merged where the
   // vendor does that. userId/deviceId below let us merge it ourselves where
   // it doesn't.
   const user =
-    pickString(props.distinct_id) ??
+    pickString(field('distinct_id')) ??
     userId ??
     deviceId ??
-    pickString(props.person_id);
+    pickString(field('person_id'));
   if (!user) return null;
 
-  const prevRaw = props.prev_screen;
+  const prevRaw = field('prev_screen');
   const prevScreen = typeof prevRaw === 'string' && prevRaw !== '' ? prevRaw : null;
 
   return {
     user,
     screen,
     prevScreen,
-    timeMs: parseTime(props.time ?? props.timestamp),
+    timeMs: parseTime(field('time') ?? field('timestamp')),
     deviceId,
     userId,
   };
