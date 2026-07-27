@@ -3,17 +3,19 @@
   "owner": {
     "name": "revylai"
   },
-  "description": "Atlas Drop-off: see onboarding and funnel drop-off painted on your app's real screens, powered by your Revyl Atlas map and PostHog events.",
+  "description": "Atlas Drop-off: see onboarding and funnel drop-off painted on your app's real screens, powered by your Revyl Atlas map and your existing analytics (PostHog, Amplitude, or Mixpanel).",
   "plugins": [
     {
       "name": "atlas-dropoff",
       "source": "./",
-      "description": "Skill that integrates the @revyl/atlas-analytics SDK, builds a screen-map against the Revyl Atlas graph, and generates the atlas-report drop-off report.",
+      "description": "Skill that integrates the @revyl/atlas-analytics SDK against PostHog, Amplitude or Mixpanel, builds a screen-map against the Revyl Atlas graph, and generates the atlas-report drop-off report.",
       "category": "analytics",
       "tags": [
         "revyl",
         "atlas",
         "posthog",
+        "amplitude",
+        "mixpanel",
         "funnel",
         "drop-off",
         "expo",

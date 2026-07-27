@@ -196,7 +196,7 @@ test('multiple keys mapping to one node use max (users, transitions, leavers) an
   assert.equal(analytics.totals.converted, 60);
 
   const joined = warnings.join('\n');
-  assert.match(joined, /multiple PostHog keys/i, 'must warn about many-to-one mappings');
+  assert.match(joined, /multiple screen keys/i, 'must warn about many-to-one mappings');
   assert.match(joined, /a1, a2/);
 });
 

@@ -1,0 +1,10 @@
+{"event":"atlas_screen","properties":{"screen":"/","prev_screen":null,"distinct_id":"u_001","atlas_app_id":"cda16afc-2b9c-4042-a0c2-d863dc3c9ec6","time":1785110400}}
+{"event":"atlas_screen","properties":{"screen":"/collection","prev_screen":"/","distinct_id":"u_001","atlas_app_id":"cda16afc-2b9c-4042-a0c2-d863dc3c9ec6","time":1785110430}}
+{"event":"atlas_screen","properties":{"screen":"/product/[id]","prev_screen":"/collection","distinct_id":"u_001","atlas_app_id":"cda16afc-2b9c-4042-a0c2-d863dc3c9ec6","time":1785110480}}
+{"event":"atlas_screen","properties":{"screen":"/checkout","prev_screen":"/product/[id]","distinct_id":"u_001","atlas_app_id":"cda16afc-2b9c-4042-a0c2-d863dc3c9ec6","time":1785110560}}
+{"event":"atlas_screen","properties":{"screen":"/order/confirmed","prev_screen":"/checkout","distinct_id":"u_001","atlas_app_id":"cda16afc-2b9c-4042-a0c2-d863dc3c9ec6","time":1785110700}}
+{"event":"atlas_screen","properties":{"screen":"/","prev_screen":null,"distinct_id":"u_002","atlas_app_id":"cda16afc-2b9c-4042-a0c2-d863dc3c9ec6","time":1785110410}}
+{"event":"atlas_screen","properties":{"screen":"/collection","prev_screen":"/","distinct_id":"u_002","atlas_app_id":"cda16afc-2b9c-4042-a0c2-d863dc3c9ec6","time":1785110445}}
+{"event":"atlas_screen","properties":{"screen":"/product/[id]","prev_screen":"/collection","distinct_id":"u_002","atlas_app_id":"cda16afc-2b9c-4042-a0c2-d863dc3c9ec6","time":1785110500}}
+{"screen":"/","prev_screen":null,"distinct_id":"u_003","timestamp":"2026-07-27T00:00:15.000Z"}
+{"screen":"/bag","prev_screen":"/","distinct_id":"u_003","timestamp":"2026-07-27T00:00:55.000Z"}

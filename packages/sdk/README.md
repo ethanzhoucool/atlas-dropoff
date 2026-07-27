@@ -7,8 +7,10 @@ screen change, shaped so the Atlas Drop-off report tool can reconstruct your
 funnel and paint drop-off onto your app's real screenshots from
 [Revyl Atlas](https://revyl.com).
 
-- **Zero native modules.** Pure TypeScript. Transport is a plain `fetch` POST
-  to PostHog: no `posthog-react-native`, no pods, no config plugins.
+- **Your analytics vendor.** PostHog, Amplitude, Mixpanel, or a custom
+  transport — one config line each, and you can send to several at once.
+- **Zero native modules.** Pure TypeScript. Transport is a plain `fetch` POST:
+  no vendor SDK, no pods, no config plugins.
 - **Works in Expo Go.** Nothing to link, nothing to rebuild.
 - **Auto screen tracking.** Expo Router is detected and tracked automatically;
   React Navigation is a one-line wire-up.
@@ -46,7 +48,10 @@ import { AtlasProvider } from "@revyl/atlas-analytics";
 
 export default function RootLayout() {
   return (
-    <AtlasProvider apiKey="phc_your_key" atlasAppId="your-atlas-app-id">
+    <AtlasProvider
+      posthog={{ apiKey: "phc_your_key" }}
+      atlasAppId="your-atlas-app-id"
+    >
       <Stack />
     </AtlasProvider>
   );
@@ -65,7 +70,7 @@ import { AtlasProvider, onNavigationStateChange } from "@revyl/atlas-analytics";
 export default function App() {
   const navigationRef = useNavigationContainerRef();
   return (
-    <AtlasProvider apiKey="phc_your_key" atlasAppId="your-atlas-app-id">
+    <AtlasProvider posthog={{ apiKey: "phc_your_key" }} atlasAppId="your-atlas-app-id">
       <NavigationContainer
         ref={navigationRef}
         onReady={() => onNavigationStateChange(navigationRef)}
@@ -85,6 +90,60 @@ duplicates are deduped by the SDK, so double-firing is harmless.
 Prefer hooks? `useAtlasNavigationTracking(navigationRef)` subscribes to the
 container's `"state"` events instead.
 
+## Pick your analytics vendor
+
+```tsx
+// PostHog
+<AtlasProvider posthog={{ apiKey: "phc_..." }} atlasAppId="..." />
+
+// Amplitude
+<AtlasProvider amplitude={{ apiKey: "..." }} atlasAppId="..." />
+
+// Mixpanel
+<AtlasProvider mixpanel={{ token: "..." }} atlasAppId="..." />
+
+// Several at once — useful while migrating between vendors. Each destination
+// retries independently, so one being down never blocks the others.
+<AtlasProvider
+  posthog={{ apiKey: "phc_..." }}
+  amplitude={{ apiKey: "..." }}
+  atlasAppId="..."
+/>
+
+// EU data residency for every destination that didn't set its own host
+<AtlasProvider mixpanel={{ token: "..." }} region="eu" atlasAppId="..." />
+```
+
+`apiKey` / `host` at the top level are the legacy PostHog spelling and still
+work; they're ignored when `posthog={{ … }}` is given.
+
+### Anything else
+
+```tsx
+import { AtlasProvider, customDestination } from "@revyl/atlas-analytics";
+
+<AtlasProvider
+  atlasAppId="..."
+  destinations={[
+    customDestination({
+      name: "warehouse",
+      async send(batch) {
+        // batch: canonical events — { event, distinct_id, device_id, user_id,
+        // insert_id, timestamp, session_started_at, properties }
+        await fetch("https://collector.example.com/events", {
+          method: "POST",
+          body: JSON.stringify(batch),
+        });
+        // Throw (or return false) to have the batch retried on the next flush.
+      },
+    }),
+  ]}
+/>;
+```
+
+Batching, dedupe ids, identity stamping and retries stay with the SDK; the
+custom destination only has to deliver.
+
 ### No router at all?
 
 The provider still works. Call `trackScreen()` yourself:
@@ -100,8 +159,9 @@ trackScreen("Paywall", { title: "Paywall" });
 ```ts
 import { identify, reset } from "@revyl/atlas-analytics";
 
-// After login: switches distinct_id to your user id and merges the
-// anonymous history into that user (via PostHog $identify).
+// After login: switches to your user id and merges the anonymous history
+// into that user, in each vendor's own dialect (PostHog $identify with
+// $anon_distinct_id; Amplitude and Mixpanel device_id + user_id pairing).
 identify("user_123", { plan: "pro" });
 
 // After logout: back to the anonymous install id, fresh session.
@@ -130,8 +190,15 @@ properties so they slot into the same funnel analysis.
 ```ts
 // Setup (pick one; <AtlasProvider> calls initAtlasAnalytics for you)
 initAtlasAnalytics(config: AtlasAnalyticsConfig): AtlasClient
-<AtlasProvider apiKey atlasAppId host? debug? flushAt? flushInterval?
-               requestTimeout? normalizeScreen? autoTrack?>
+<AtlasProvider atlasAppId posthog? amplitude? mixpanel? destinations? region?
+               debug? flushAt? flushInterval? requestTimeout?
+               normalizeScreen? autoTrack?>
+
+// Destinations (for `destinations: [...]`)
+posthogDestination({ apiKey, host? })
+amplitudeDestination({ apiKey, host?, minIdLength? })
+mixpanelDestination({ token, host? })
+customDestination({ name, send, maxBatchSize? })
 
 // Screens & events
 trackScreen(screen: string, options?: { title?: string; screenKeyOverride?: string }): void
@@ -160,9 +227,14 @@ isExpoRouterAvailable(): boolean
 
 | Option          | Type      | Default                     | Notes                                              |
 | --------------- | --------- | --------------------------- | -------------------------------------------------- |
-| `apiKey`        | `string`  | (required)                  | PostHog project API key (`phc_...`).               |
 | `atlasAppId`    | `string`  | (required)                  | Revyl Atlas app id; the join key to your Atlas map. |
-| `host`          | `string`  | `https://us.i.posthog.com`  | Use `https://eu.i.posthog.com` for EU Cloud.       |
+| `posthog`       | `{ apiKey, host? }` | —                 | PostHog project API key (`phc_...`).               |
+| `amplitude`     | `{ apiKey, host?, minIdLength? }` | —   | Amplitude project API key. `minIdLength` defaults to 1 so short user ids aren't rejected. |
+| `mixpanel`      | `{ token, host? }` | —                  | Mixpanel project token.                            |
+| `destinations`  | `AtlasDestination[]` | `[]`             | Extra destinations, e.g. `customDestination(...)`. Combined with the three above. |
+| `region`        | `"us" \| "eu"` | `"us"`                 | Data region for any destination without its own `host`. |
+| `apiKey`        | `string`  | —                           | Legacy PostHog key; same as `posthog: { apiKey }`. |
+| `host`          | `string`  | —                           | Legacy PostHog host; same as `posthog: { host }`.  |
 | `debug`         | `boolean` | `false`                     | Console logging + delivery warnings.               |
 | `flushAt`       | `number`  | `20`                        | Flush when this many events are queued.            |
 | `flushInterval` | `number`  | `5000` (ms)                 | Periodic flush interval (min 1000).                |
@@ -184,10 +256,11 @@ row). Every event carries:
 | `atlas_app_id` | `string`         | Revyl Atlas app id, from config.                                                          |
 | `session_id`   | `string`         | Per-app-launch id (rotates on `reset()`).                                                 |
 | `sdk`          | `string`         | Always `"atlas-analytics-rn"`.                                                            |
-| `sdk_version`  | `string`         | Always `"0.1.0"` for this release.                                                        |
+| `sdk_version`  | `string`         | Always `"0.2.0"` for this release.                                                        |
 | `$screen_name` | `string`         | Mirrors the screen key as a plain property, handy for PostHog filters. (PostHog's native "Screens" UI keys off events literally named `$screen`, which this SDK does not emit.) |
 
-On the wire, events are batched and POSTed to `${host}/batch/`:
+On the wire, each destination maps that same event into its own envelope.
+PostHog (`POST ${host}/batch/`):
 
 ```json
 {
@@ -206,16 +279,27 @@ On the wire, events are batched and POSTed to `${host}/batch/`:
         "atlas_app_id": "b54f8035-your-atlas-app-id",
         "session_id": "d6df4601-1a40-4f7f-a906-5cf327734ec6",
         "sdk": "atlas-analytics-rn",
-        "sdk_version": "0.1.0"
+        "sdk_version": "0.2.0"
       }
     }
   ]
 }
 ```
 
+Amplitude (`POST https://api2.amplitude.com/2/httpapi`) receives the same
+properties as `event_properties`, with `device_id` (install id) and `user_id`
+(after `identify()`) side by side, a numeric `session_id`, and an `insert_id`
+for dedupe. User properties go to the dedicated form-encoded
+`POST /identify` endpoint rather than riding along as an event. Mixpanel (`POST https://api.mixpanel.com/track`) receives them
+with `$device_id`/`$user_id` and a `$device:`-prefixed `distinct_id` while
+anonymous. The `$`-prefixed PostHog properties (`$screen_name`, `$set`,
+`$anon_distinct_id`) are stripped from the other two.
+
 `distinct_id` is a stable per-install UUID until `identify()` swaps in your
-user id. `identify()` also emits a PostHog `$identify` event (with
-`$anon_distinct_id`) so the anonymous history merges into the user.
+user id. On PostHog, `identify()` also emits a `$identify` event (with
+`$anon_distinct_id`) so the anonymous history merges into the user; Amplitude
+and Mixpanel merge from the device+user id pairing instead, and user
+properties go to their `/identify` and `/engage` endpoints respectively.
 
 ## How delivery works
 
@@ -231,6 +315,11 @@ user id. `identify()` also emits a PostHog `$identify` event (with
   (network errors, timeouts, 429, 5xx) requeue the batch for the next flush;
   permanent ones (other 4xx) drop it. With `debug: true` you'll see a
   `console.warn`.
+- **Destinations retry independently.** A batch PostHog accepted and Amplitude
+  500'd is retried for Amplitude only — no duplicate delivery to the vendor
+  that already took it. Every event carries a stable `insert_id`
+  (`uuid` on PostHog, `insert_id` on Amplitude, `$insert_id` on Mixpanel), so
+  even a partially-delivered retry dedupes rather than double-counting.
 - The queue is capped at 500 events, dropping oldest first, so a long offline
   session can't grow memory unbounded.
 

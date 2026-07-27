@@ -1,8 +1,8 @@
 {
   "name": "atlas-dropoff",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "See exactly where users drop off in your app — painted on your real screens. A tiny Expo/RN SDK + a report CLI, built on Revyl Atlas + PostHog.",
+  "description": "See exactly where users drop off in your app \u2014 painted on your real screens. A tiny Expo/RN SDK + a report CLI, built on Revyl Atlas and your analytics (PostHog, Amplitude, or Mixpanel).",
   "homepage": "https://github.com/ethanzhoucool/atlas-dropoff",
   "repository": "https://github.com/ethanzhoucool/atlas-dropoff",
   "license": "MIT",

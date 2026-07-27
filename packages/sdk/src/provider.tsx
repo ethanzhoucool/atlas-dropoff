@@ -3,7 +3,10 @@
  *
  * Initializes the shared client before children render and mounts
  * auto-tracking. Config is read once on first mount; changing the props
- * afterwards has no effect (the client is a process-wide singleton).
+ * afterwards has no effect (the client is a process-wide singleton). Which
+ * analytics vendor(s) receive the events is a config detail
+ * (`posthog` / `amplitude` / `mixpanel` / `destinations`) — the tracking
+ * surface is identical either way.
  */
 
 import * as React from "react";

@@ -1,8 +1,8 @@
 {
   "name": "atlas-dropoff",
-  "displayName": "Atlas Drop-off — onboarding & funnel drop-off on your real screens",
-  "description": "Integrates the @revyl/atlas-analytics SDK into an Expo/React Native app and generates a drop-off report from Revyl Atlas + PostHog: detects the router, wires AtlasProvider, verifies atlas_screen events, maps routes to Atlas nodes, and renders report.html on the app's real screenshots.",
-  "version": "0.1.0",
+  "displayName": "Atlas Drop-off \u2014 onboarding & funnel drop-off on your real screens",
+  "description": "Integrates the @revyl/atlas-analytics SDK into an Expo/React Native app and generates a drop-off report from Revyl Atlas + your analytics vendor (PostHog, Amplitude, or Mixpanel): detects the router and the vendor, wires AtlasProvider, verifies atlas_screen events, maps routes to Atlas nodes, and renders report.html on the app's real screenshots.",
+  "version": "0.2.0",
   "author": {
     "name": "revylai",
     "url": "https://revyl.com"
@@ -14,6 +14,8 @@
     "revyl",
     "atlas",
     "posthog",
+    "amplitude",
+    "mixpanel",
     "analytics",
     "funnel",
     "drop-off",

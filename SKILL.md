@@ -2,12 +2,13 @@
 name: atlas-dropoff
 description: >
   Integrate Atlas Drop-off into an Expo or React Native app end-to-end: install the
-  @revyl/atlas-analytics SDK, wrap the app root in AtlasProvider, verify atlas_screen
-  events reach PostHog, build a screen-map.json against the app's Revyl Atlas graph,
-  and generate a drop-off report painted on the app's real screenshots. Use when the
-  user says "integrate Atlas Drop-off", "add drop-off analytics", "show onboarding
-  drop-off", "show checkout drop-off", "PostHog funnel on Atlas", "where users drop
-  off", "set up atlas-analytics", "wire up AtlasProvider", or "generate the drop-off
+  @revyl/atlas-analytics SDK, wrap the app root in AtlasProvider pointed at the app's
+  analytics vendor (PostHog, Amplitude, or Mixpanel), verify atlas_screen events land,
+  build a screen-map.json against the app's Revyl Atlas graph, and generate a drop-off
+  report painted on the app's real screenshots. Use when the user says "integrate Atlas
+  Drop-off", "add drop-off analytics", "show onboarding drop-off", "show checkout
+  drop-off", "PostHog/Amplitude/Mixpanel funnel on Atlas", "where users drop off",
+  "set up atlas-analytics", "wire up AtlasProvider", or "generate the drop-off
   report".
 ---
 
@@ -15,8 +16,8 @@ description: >
 
 You are integrating Atlas Drop-off into the user's mobile app. Two pieces ship in this repo:
 
-- `@revyl/atlas-analytics` (`packages/sdk/`): a tiny Expo/React Native SDK. No native modules, works in Expo Go. It emits one `atlas_screen` PostHog event per screen view.
-- `atlas-report` (`packages/report/`): a Node CLI that fetches the app's Revyl Atlas map, queries PostHog for `atlas_screen` events, and renders a self-contained `report.html` showing drop-off on the app's real screenshots.
+- `@revyl/atlas-analytics` (`packages/sdk/`): a tiny Expo/React Native SDK. No native modules, works in Expo Go. It emits one `atlas_screen` event per screen view to PostHog, Amplitude, Mixpanel, or a custom transport.
+- `atlas-report` (`packages/report/`): a Node CLI that fetches the app's Revyl Atlas map, queries that same vendor for `atlas_screen` events, and renders a self-contained `report.html` showing drop-off on the app's real screenshots.
 
 The join key is the `screen` property on each event. Your job is to wire the SDK, then map the app's route keys to Atlas node names so the report can paint numbers onto the right screenshots.
 
@@ -25,9 +26,15 @@ The join key is the `screen` property on each event. Your job is to wire the SDK
 ## Prerequisites (check first; stop with a clear message if any is missing)
 
 - An existing Revyl Atlas map for the app. Run `revyl atlas apps` and note the Atlas **app id**, a **UUID** (e.g. `cda16afc-2b9c-4042-a0c2-d863dc3c9ec6`), not the app name. If the app isn't listed, the user needs an Atlas map first (Atlas is built by Revyl's vision-based engine exploring the app on cloud devices).
-- A PostHog project. Two different credentials are involved; don't confuse them:
-  - the **project API key** (`phc_...`): the *ingest* key the SDK uses to send events (safe to ship in the app bundle).
-  - a **personal API key** (`phx_...`, scope `query:read`) plus the **numeric project id** (the number in the PostHog project URL): used by the report CLI to *query* events. (Or skip these with offline `--counts` mode, Step 6.)
+- An analytics project. **Use whichever vendor the app already has** — check `$APP/package.json` and `.env` for `posthog`, `@amplitude/*`, or `mixpanel*` before asking. Two different credentials are involved per vendor; don't confuse them:
+
+  | Vendor | Ingest key (SDK, ships in the bundle) | Read credential (report CLI) |
+  | --- | --- | --- |
+  | PostHog | project API key `phc_...` | personal API key `phx_...` (`query:read`) + numeric project id |
+  | Amplitude | project API key | API key **and** secret key (Settings → Projects → General) |
+  | Mixpanel | project token | service account username + secret (Project Settings → Service Accounts) + numeric project id |
+
+  The read credential is only needed at report time, and can be skipped entirely with offline `--counts` / `--events` mode (Step 6).
 - The `revyl` CLI, installed and authenticated (`revyl atlas apps` succeeding proves both).
 
 ## Step 0: Build this repo once
@@ -67,11 +74,23 @@ Then install the tarball into `$APP` with the app's package manager (detect from
 
 ## Step 3: Wire AtlasProvider at the app root
 
-Put the PostHog **project** key in env (never hardcode). Add to `$APP/.env`:
+Put the vendor's **ingest** key in env (never hardcode). Add to `$APP/.env` — one of:
 
 ```
 EXPO_PUBLIC_POSTHOG_KEY=phc_...
+EXPO_PUBLIC_AMPLITUDE_KEY=...
+EXPO_PUBLIC_MIXPANEL_TOKEN=...
 ```
+
+The provider prop is the only thing that changes between vendors:
+
+```tsx
+<AtlasProvider posthog={{ apiKey: process.env.EXPO_PUBLIC_POSTHOG_KEY! }} ... />
+<AtlasProvider amplitude={{ apiKey: process.env.EXPO_PUBLIC_AMPLITUDE_KEY! }} ... />
+<AtlasProvider mixpanel={{ token: process.env.EXPO_PUBLIC_MIXPANEL_TOKEN! }} ... />
+```
+
+Pass more than one to dual-write during a migration, `region="eu"` for EU data residency, and `destinations={[customDestination({ name, send })]}` for anything else (Segment, RudderStack, a warehouse).
 
 Use the Atlas app **UUID** (from `revyl atlas apps`) as `atlasAppId`. The report joins on this exact id, so if you pass the app *name* instead, events won't match and the report is empty.
 
@@ -83,7 +102,7 @@ import { AtlasProvider } from '@revyl/atlas-analytics';
 export default function RootLayout() {
   return (
     <AtlasProvider
-      apiKey={process.env.EXPO_PUBLIC_POSTHOG_KEY!}
+      posthog={{ apiKey: process.env.EXPO_PUBLIC_POSTHOG_KEY! }}
       atlasAppId="<ATLAS_APP_UUID>"
     >
       <Stack />  {/* existing layout content unchanged */}
@@ -110,7 +129,7 @@ function Navigation() {
 
 export default function App() {
   return (
-    <AtlasProvider apiKey={process.env.EXPO_PUBLIC_POSTHOG_KEY!} atlasAppId="<ATLAS_APP_UUID>">
+    <AtlasProvider posthog={{ apiKey: process.env.EXPO_PUBLIC_POSTHOG_KEY! }} atlasAppId="<ATLAS_APP_UUID>">
       <Navigation />
     </AtlasProvider>
   );
@@ -125,13 +144,13 @@ If the app has auth, wire identity where login/logout happen: `identify(userId)`
 
 ## Step 4: Verify events fire
 
-Run the app (`npx expo start`, or the app's run command) and navigate through 3-4 screens. Check PostHog's Activity (live events) view, filtered to event `atlas_screen`. Each event should carry `screen` (a collapsed route key like `/product/[id]`), `screen_title`, `prev_screen`, `atlas_app_id` (matching the UUID you wired), `session_id`, and `sdk`/`sdk_version`.
+Run the app (`npx expo start`, or the app's run command) and navigate through 3-4 screens. Check the vendor's live view, filtered to event `atlas_screen` — PostHog's Activity, Amplitude's User Look-Up / stream, Mixpanel's Events. Each event should carry `screen` (a collapsed route key like `/product/[id]`), `screen_title`, `prev_screen`, `atlas_app_id` (matching the UUID you wired), `session_id`, and `sdk`/`sdk_version`.
 
-Events land within a few seconds (the SDK batches; default flush is 5s). For instant confirmation during setup, pass `debug` to the provider and/or call `flush()`. Don't proceed until events are visibly landing. If nothing arrives: restart the dev server after editing `.env`, and confirm the key is the PostHog **project** key (`phc_`).
+Events land within a few seconds (the SDK batches; default flush is 5s). For instant confirmation during setup, pass `debug` to the provider and/or call `flush()`. Don't proceed until events are visibly landing. If nothing arrives: restart the dev server after editing `.env`, and confirm you used the **ingest** key, not the read credential.
 
 ## Step 5: Build screen-map.json (highest-value step)
 
-The report joins PostHog `screen` values to Atlas nodes. You have both sides in context, so produce the mapping yourself:
+The report joins the events' `screen` values to Atlas nodes. You have both sides in context, so produce the mapping yourself:
 
 1. List the app's emitted screen keys. Expo Router: they are the **collapsed route patterns**. Enumerate files under `app/` and keep the bracket form (`app/product/[id].tsx` → `/product/[id]`), dropping group segments like `(tabs)`. React Navigation: the screen names. Plain RN: the names you passed to `trackScreen`.
 2. List the real Atlas node names. Use the human-readable summary to eyeball them, then the JSON for exact strings:
@@ -156,16 +175,36 @@ Match by meaning (read what each route renders), not string similarity. Leave a 
 
 ## Step 6: Generate the report
 
-Live query (needs the personal key + numeric project id from Prerequisites):
+Live query, using the read credential for the app's vendor. The CLI picks the source automatically when only one vendor's credentials are exported; `--source` forces it.
 
 ```
+# PostHog
 POSTHOG_PERSONAL_API_KEY=phx_... \
+  node $REPO/packages/report/dist/cli.js generate \
+    --app <ATLAS_APP_UUID> --project <NUMERIC_PROJECT_ID> \
+    --screen-map $APP/screen-map.json --out $APP/atlas-dropoff-report.html
+
+# Amplitude (keys are per-project; no --project)
+AMPLITUDE_API_KEY=... AMPLITUDE_SECRET_KEY=... \
+  node $REPO/packages/report/dist/cli.js generate \
+    --app <ATLAS_APP_UUID> \
+    --screen-map $APP/screen-map.json --out $APP/atlas-dropoff-report.html
+
+# Mixpanel (service account + numeric project id)
+MIXPANEL_SERVICE_ACCOUNT=... MIXPANEL_SERVICE_SECRET=... \
   node $REPO/packages/report/dist/cli.js generate \
     --app <ATLAS_APP_UUID> --project <NUMERIC_PROJECT_ID> \
     --screen-map $APP/screen-map.json --out $APP/atlas-dropoff-report.html
 ```
 
-No personal key handy? Run offline: query the per-screen and per-transition counts yourself (any PostHog access works) into a `--counts` JSON (`node $REPO/packages/report/dist/cli.js --help` and `packages/report/counts.example.json` show the schema), then pass `--counts counts.json` instead of the key/project.
+Add `--region eu` for EU data residency (Amplitude and Mixpanel), and `--days <n>` to change the 28-day window.
+
+No read credential handy? Run offline, two ways:
+
+- **`--counts <file>`** — per-screen and per-transition totals you queried yourself. Schema in `packages/report/counts.example.json`. The funnel is a min-cohort estimate.
+- **`--events <file>`** — a raw JSONL export from any tool. Schema in `packages/report/events.example.jsonl`. Keeps per-user chronology, so the funnel is exact.
+
+Amplitude note: its funnel API prices a query at `days × steps × 2` and refuses anything over ~1000. If the discovered path is long, the CLI says so and falls back to the estimate — lower `--days` to get the exact funnel back.
 
 Open the result:
 

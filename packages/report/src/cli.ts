@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /* ============================================================
-   atlas-report — join a Revyl Atlas screen map with PostHog
-   atlas_screen events and render a single self-contained HTML
+   atlas-report — join a Revyl Atlas screen map with atlas_screen
+   events from your analytics vendor (PostHog, Amplitude, Mixpanel,
+   or an offline file) and render a single self-contained HTML
    drop-off report.
    ============================================================ */
 
@@ -13,52 +14,67 @@ import {
   buildFunnelPath, buildNodeTransitions, computeAnalytics, nodeUsersFromCounts,
 } from './funnel.js';
 import { mapScreens, printMappingReport } from './map.js';
-import { fetchCounts, fetchFunnel, loadCountsFile, type PostHogOptions } from './posthog.js';
 import { renderReport } from './render.js';
+import { SOURCE_NAMES, chooseSourceName, createSource } from './sources/index.js';
+import type { CountsSource } from './sources/index.js';
 import type { Counts } from './types.js';
+import { isLiveSource } from './types.js';
 
-const VERSION = '0.1.0';
-const DEFAULT_HOST = 'https://us.posthog.com';
+const VERSION = '0.2.0';
 const DEFAULT_OUT = 'atlas-dropoff-report.html';
 const DEFAULT_REVYL = '~/.revyl/bin/revyl';
 
 const HELP = `atlas-report ${VERSION}
-Join a Revyl Atlas screen map with PostHog atlas_screen events and render a
-single self-contained HTML drop-off report.
+Join a Revyl Atlas screen map with atlas_screen events from your analytics
+vendor and render a single self-contained HTML drop-off report.
 
 USAGE
   atlas-report generate --app <atlas-app-id-or-name> [options]
 
+SOURCE
+  --source <name>       ${SOURCE_NAMES.join(' | ')}
+                        Default: the one vendor whose credentials are set,
+                        else posthog. "counts"/"events" are offline files.
+  --project <id>        PostHog project id / Mixpanel project id
+  --host <url>          Query API host for the chosen vendor
+  --region <us|eu>      Vendor data region (default: us)
+  --counts <file>       Offline: precomputed counts JSON (counts.example.json)
+  --events <file>       Offline: raw events JSONL (events.example.jsonl).
+                        Supports the exact sequential funnel.
+  --max-events <n>      Cap events read from Mixpanel/--events (default: 2000000)
+
 OPTIONS
   --app <id|name>       Revyl Atlas app id or name (required)
-  --project <id>        PostHog project id (default: $POSTHOG_PROJECT_ID)
-  --host <url>          PostHog query API host (default: $POSTHOG_HOST or
-                        ${DEFAULT_HOST})
   --days <n>            Lookback window in days, 1-3650 (default: 28)
-  --timeout <s>         PostHog query timeout in seconds (default: 60)
+  --timeout <s>         Per-query timeout in seconds (default: 60)
   --funnel-window <s>   Sequential-funnel conversion window in seconds
                         (live mode; default: the full lookback, days*86400)
-  --screen-map <file>   JSON map of PostHog screen keys -> Atlas node id/name
+  --screen-map <file>   JSON map of event screen keys -> Atlas node id/name
   --out <file>          Output HTML path (default: ${DEFAULT_OUT})
   --atlas-cache <dir>   Atlas graph + screenshot cache (default: .atlas-cache/<app>)
   --refresh             Ignore the cache and re-fetch the Atlas graph
-  --counts <file>       Offline mode: read precomputed counts JSON instead of
-                        querying PostHog (see counts.example.json)
   --revyl <path>        Path to the revyl CLI (default: ${DEFAULT_REVYL})
   -h, --help            Show this help
   -v, --version         Print the version
 
 ENVIRONMENT
-  POSTHOG_PERSONAL_API_KEY  Personal API key for the PostHog query API
-                            (required unless --counts is used)
-  POSTHOG_PROJECT_ID        Default for --project
-  POSTHOG_HOST              Default for --host
+  PostHog     POSTHOG_PERSONAL_API_KEY (query:read), POSTHOG_PROJECT_ID, POSTHOG_HOST
+  Amplitude   AMPLITUDE_API_KEY, AMPLITUDE_SECRET_KEY, AMPLITUDE_HOST
+  Mixpanel    MIXPANEL_SERVICE_ACCOUNT, MIXPANEL_SERVICE_SECRET,
+              MIXPANEL_PROJECT_ID, MIXPANEL_HOST
 
 EXAMPLES
-  # live: query PostHog and render
+  # PostHog
   POSTHOG_PERSONAL_API_KEY=phx_... atlas-report generate --app parrot --project 12345
 
-  # offline: no PostHog key needed
+  # Amplitude
+  AMPLITUDE_API_KEY=... AMPLITUDE_SECRET_KEY=... atlas-report generate --app parrot
+
+  # Mixpanel
+  MIXPANEL_SERVICE_ACCOUNT=... MIXPANEL_SERVICE_SECRET=... \\
+    atlas-report generate --app parrot --project 3141592
+
+  # offline: no credentials needed
   atlas-report generate --app parrot --counts counts.example.json
 `;
 
@@ -66,10 +82,12 @@ EXAMPLES
 
 interface CliOptions {
   app?: string;
+  source?: string;
   project?: string;
   host?: string;
+  region?: 'us' | 'eu';
   days: number;
-  /** PostHog query timeout in seconds. */
+  /** Query timeout in seconds. */
   timeout: number;
   /** Sequential-funnel window in seconds (live mode); defaults to days*86400. */
   funnelWindow?: number;
@@ -78,12 +96,15 @@ interface CliOptions {
   atlasCache?: string;
   refresh: boolean;
   counts?: string;
+  events?: string;
+  maxEvents?: number;
   revyl: string;
 }
 
 const VALUE_FLAGS = new Set([
-  '--app', '--project', '--host', '--days', '--timeout', '--funnel-window',
-  '--screen-map', '--out', '--atlas-cache', '--counts', '--revyl',
+  '--app', '--source', '--project', '--host', '--region', '--days', '--timeout',
+  '--funnel-window', '--screen-map', '--out', '--atlas-cache', '--counts',
+  '--events', '--max-events', '--revyl',
 ]);
 const BOOL_FLAGS = new Set(['--refresh', '-h', '--help', '-v', '--version']);
 
@@ -101,6 +122,14 @@ function parseArgs(argv: string[]): CliOptions {
     revyl: DEFAULT_REVYL,
   };
   const positionals: string[] = [];
+
+  const positiveInt = (flag: string, value: string, max: number): number => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > max) {
+      fail(`${flag} must be an integer between 1 and ${max} (got "${value}").`);
+    }
+    return n;
+  };
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -127,24 +156,24 @@ function parseArgs(argv: string[]): CliOptions {
       i++;
       switch (arg) {
         case '--app': opts.app = value; break;
+        case '--source': {
+          if (!(SOURCE_NAMES as readonly string[]).includes(value)) {
+            fail(`--source must be one of: ${SOURCE_NAMES.join(', ')} (got "${value}").`);
+          }
+          opts.source = value;
+          break;
+        }
         case '--project': opts.project = value; break;
         case '--host': opts.host = value; break;
-        case '--days': {
-          const n = Number(value);
-          if (!Number.isInteger(n) || n < 1 || n > 3650) {
-            fail(`--days must be an integer between 1 and 3650 (got "${value}").`);
+        case '--region': {
+          if (value !== 'us' && value !== 'eu') {
+            fail(`--region must be "us" or "eu" (got "${value}").`);
           }
-          opts.days = n;
+          opts.region = value;
           break;
         }
-        case '--timeout': {
-          const n = Number(value);
-          if (!Number.isInteger(n) || n < 1 || n > 3600) {
-            fail(`--timeout must be an integer between 1 and 3600 seconds (got "${value}").`);
-          }
-          opts.timeout = n;
-          break;
-        }
+        case '--days': opts.days = positiveInt('--days', value, 3650); break;
+        case '--timeout': opts.timeout = positiveInt('--timeout', value, 3600); break;
         case '--funnel-window': {
           const n = Number(value);
           if (!Number.isInteger(n) || n < 1) {
@@ -153,10 +182,12 @@ function parseArgs(argv: string[]): CliOptions {
           opts.funnelWindow = n;
           break;
         }
+        case '--max-events': opts.maxEvents = positiveInt('--max-events', value, 1e9); break;
         case '--screen-map': opts.screenMap = value; break;
         case '--out': opts.out = value; break;
         case '--atlas-cache': opts.atlasCache = value; break;
         case '--counts': opts.counts = value; break;
+        case '--events': opts.events = value; break;
         case '--revyl': opts.revyl = value; break;
       }
       continue;
@@ -198,7 +229,7 @@ function loadScreenMapFile(file: string): Record<string, string> {
     fail(`Could not read screen map "${file}": ${(err as Error).message}`);
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    fail(`Screen map "${file}" must be a JSON object of { "<posthog screen>": "<atlas node id or name>" }.`);
+    fail(`Screen map "${file}" must be a JSON object of { "<event screen key>": "<atlas node id or name>" }.`);
   }
   const out: Record<string, string> = {};
   for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
@@ -210,6 +241,15 @@ function loadScreenMapFile(file: string): Record<string, string> {
 
 const log = (line: string): void => {
   process.stderr.write(`${line}\n`);
+};
+
+/** Human name for the source, used in log lines and the report disclaimer. */
+const VENDOR_LABEL: Record<string, string> = {
+  posthog: 'PostHog',
+  amplitude: 'Amplitude',
+  mixpanel: 'Mixpanel',
+  'counts-file': 'the counts file',
+  'events-file': 'the events file',
 };
 
 /* ── main ───────────────────────────────────────────────────── */
@@ -231,40 +271,48 @@ async function main(): Promise<void> {
   const shots = atlas.nodes.filter(n => n.screenshot).length;
   log(`· Atlas: ${atlas.nodes.length} screens, ${atlas.edges.length} transitions, ${shots} screenshots`);
 
-  /* 2 — counts: live PostHog query, or the offline --counts file */
+  /* 2 — counts, from whichever analytics source is configured */
+  const selection = {
+    source: opts.source,
+    counts: opts.counts,
+    events: opts.events,
+    project: opts.project,
+    host: opts.host,
+    region: opts.region,
+    days: opts.days,
+    timeoutMs: opts.timeout * 1000,
+    maxEvents: opts.maxEvents,
+    appId: atlas.app_id, // canonical Atlas app id, matches `atlas_app_id`
+    env: process.env,
+    log,
+  };
+  let source: CountsSource;
   let counts: Counts;
-  let pgOpts: PostHogOptions | undefined;
-  if (opts.counts) {
-    counts = loadCountsFile(opts.counts);
-    log(`· counts: ${Object.keys(counts.screens).length} screens, ${counts.transitions.length} transitions (offline file ${opts.counts})`);
-    if (!counts.leavers) {
-      log('· counts file has no "leavers" — exit rates use the per-destination sum approximation (can bias low)');
+  try {
+    const chosen = chooseSourceName(selection);
+    if (chosen.why === 'env') {
+      log(`· source: ${chosen.name} (only vendor with credentials set — override with --source)`);
     }
-  } else {
-    const apiKey = process.env.POSTHOG_PERSONAL_API_KEY;
-    if (!apiKey) {
-      fail(
-        'POSTHOG_PERSONAL_API_KEY is not set. Export a PostHog personal API key ' +
-        '(query:read scope), or run offline with --counts <file> — see counts.example.json.',
-      );
-    }
-    const projectId = opts.project ?? process.env.POSTHOG_PROJECT_ID;
-    if (!projectId) fail('No PostHog project id — pass --project or set POSTHOG_PROJECT_ID.');
-    const host = opts.host ?? process.env.POSTHOG_HOST ?? DEFAULT_HOST;
-    log(`→ querying PostHog (project ${projectId}, last ${opts.days} days)…`);
-    pgOpts = {
-      host,
-      projectId,
-      apiKey,
-      appId: atlas.app_id, // canonical Atlas app id, matches properties.atlas_app_id
-      days: opts.days,
-      timeoutMs: opts.timeout * 1000,
-    };
-    counts = await fetchCounts(pgOpts);
-    log(`· PostHog: ${Object.keys(counts.screens).length} screens, ${counts.transitions.length} transitions with data`);
+    source = createSource(selection);
+    const vendor = VENDOR_LABEL[source.id] ?? source.id;
+    log(
+      isLiveSource(source.id)
+        ? `→ querying ${vendor} (last ${opts.days} days)…`
+        : `→ reading ${opts.counts ?? opts.events}…`,
+    );
+    counts = await source.fetchCounts();
+    log(
+      `· ${vendor}: ${Object.keys(counts.screens).length} screens, ` +
+      `${counts.transitions.length} transitions with data`,
+    );
+  } catch (err) {
+    fail((err as Error).message);
+  }
+  if (!counts.leavers || Object.keys(counts.leavers).length === 0) {
+    log('· no "leavers" data — exit rates use the per-destination sum approximation (can bias low)');
   }
 
-  /* 3 — map PostHog screen keys onto Atlas nodes */
+  /* 3 — map event screen keys onto Atlas nodes */
   const explicit = opts.screenMap ? loadScreenMapFile(opts.screenMap) : {};
   const mapping = mapScreens(counts, atlas, explicit);
   printMappingReport(mapping, log);
@@ -273,12 +321,12 @@ async function main(): Promise<void> {
   const transitions = buildNodeTransitions(counts, mapping);
   const dateRange = counts.date_range ?? `Last ${opts.days} days`;
 
-  // Live mode: run a real sequential funnel (HogQL windowFunnel) over the
-  // discovered path for exact end-to-end conversion. Offline mode has no
-  // per-user data, so computeAnalytics uses the monotone min-cohort estimate.
+  // Sources that keep per-user data (PostHog's windowFunnel, Amplitude's
+  // funnel API, the locally-computed Mixpanel/events streams) answer the exact
+  // sequential question. The rest fall back to the min-cohort estimate.
   let funnelPath: string[] | undefined;
   let sequentialCohort: number[] | undefined;
-  if (pgOpts && counts.source === 'posthog') {
+  if (source.fetchFunnel) {
     const { users, keysByNode } = nodeUsersFromCounts(counts, mapping);
     const byId = new Map(atlas.nodes.map(n => [n.id, n]));
     const p = buildFunnelPath(atlas, byId, users, transitions);
@@ -286,29 +334,33 @@ async function main(): Promise<void> {
     if (p.length >= 2 && stepKeys.every(k => k.length > 0)) {
       const windowSeconds = opts.funnelWindow ?? opts.days * 86400;
       try {
-        log(`→ querying PostHog funnel (${p.length} steps, ${opts.funnelWindow ? `${windowSeconds}s` : `${opts.days}d`} window)…`);
-        sequentialCohort = await fetchFunnel(pgOpts, stepKeys, windowSeconds);
+        log(`→ running the sequential funnel (${p.length} steps, ${opts.funnelWindow ? `${windowSeconds}s` : `${opts.days}d`} window)…`);
+        sequentialCohort = await source.fetchFunnel(stepKeys, windowSeconds);
         funnelPath = p;
       } catch (err) {
-        log(`! funnel query failed (${(err as Error).message}) — using the min-cohort estimate.`);
+        log(`! sequential funnel unavailable (${(err as Error).message}) — using the min-cohort estimate.`);
       }
     }
   }
 
-  const sequential = sequentialCohort !== undefined;
-  const disclaimer = sequential
-    ? `Distinct-person counts from PostHog atlas_screen events (${dateRange.toLowerCase()}), joined onto the Revyl Atlas screen graph. End-to-end conversion is a real sequential funnel (HogQL windowFunnel) over the discovered path.`
-    : counts.source === 'posthog'
-      ? `Distinct-person counts from PostHog atlas_screen events (${dateRange.toLowerCase()}), joined onto the Revyl Atlas screen graph. Funnel conversion uses a monotone min-cohort estimate over per-step transition counts — an upper bound on true end-to-end traversal.`
-      : `Counts loaded from ${opts.counts} (offline mode) — same schema the live PostHog query produces, joined onto the Revyl Atlas screen graph. Funnel conversion is a monotone min-cohort estimate from pairwise per-step counts — an upper bound on true end-to-end path traversal.`;
+  const vendor = VENDOR_LABEL[source.id] ?? source.id;
+  const provenance = isLiveSource(source.id)
+    ? `Distinct-user counts from ${vendor} atlas_screen events (${dateRange.toLowerCase()}), joined onto the Revyl Atlas screen graph.`
+    : `Counts loaded from ${opts.counts ?? opts.events} (offline mode), joined onto the Revyl Atlas screen graph.`;
+  const method = sequentialCohort !== undefined
+    ? ' End-to-end conversion is a real sequential funnel over the discovered path.'
+    : ' Funnel conversion uses a monotone min-cohort estimate over per-step transition counts — an upper bound on true end-to-end traversal.';
 
   const analytics = computeAnalytics(atlas, counts, mapping, transitions, {
-    dateRange, disclaimer, path: funnelPath, sequentialCohort,
+    dateRange, disclaimer: provenance + method, path: funnelPath, sequentialCohort,
   });
 
   /* 5 — render the single-file report */
   const appName = atlas.app_name ?? app;
-  const html = renderReport(atlas, analytics, transitions, { appName });
+  const html = renderReport(atlas, analytics, transitions, {
+    appName,
+    sourceLabel: source.label,
+  });
   const outPath = path.resolve(opts.out);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, html);

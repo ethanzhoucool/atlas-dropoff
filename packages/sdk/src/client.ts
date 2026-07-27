@@ -1,14 +1,23 @@
 /**
  * The capture / batch / transport singleton.
  *
- * Transport is a plain `fetch` POST to PostHog's /batch/ endpoint — no native
- * modules, no posthog-react-native, safe in Expo Go. Nothing in here ever
- * throws into app code: delivery failures are swallowed (and surfaced via
- * console.warn when `debug` is on).
+ * Capture is vendor-neutral: one canonical event queue, fanned out at flush
+ * time to every configured destination (PostHog, Amplitude, Mixpanel, or a
+ * custom transport). Delivery is a plain `fetch` — no native modules, no
+ * vendor SDKs, safe in Expo Go. Nothing in here ever throws into app code:
+ * delivery failures are swallowed (and surfaced via console.warn when `debug`
+ * is on), and one failing destination never blocks the others.
  */
 
 import { AppState } from "react-native";
 import type { NativeEventSubscription } from "react-native";
+import { resolveDestinations } from "./destinations";
+import type {
+  AtlasDeliveryVerdict,
+  AtlasDestination,
+  AtlasDestinationRequest,
+} from "./destinations/types";
+import { defaultClassify } from "./destinations/types";
 import { generateId, getOrCreateInstallId } from "./id";
 import { createStorage } from "./storage";
 import type { AtlasStorage } from "./storage";
@@ -20,27 +29,44 @@ import type {
 } from "./types";
 
 const SDK_NAME = "atlas-analytics-rn";
-const SDK_VERSION = "0.1.0";
+const SDK_VERSION = "0.2.0";
 const SCREEN_EVENT = "atlas_screen";
 
-const DEFAULT_HOST = "https://us.i.posthog.com";
 const DEFAULT_FLUSH_AT = 20;
 const DEFAULT_FLUSH_INTERVAL_MS = 5000;
 const MIN_FLUSH_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
-/** Hard cap so an offline session can't grow the queue unbounded. */
+/** Hard cap so an offline session can't grow a queue unbounded. */
 const MAX_QUEUE_SIZE = 500;
 
 const IDENTIFIED_ID_KEY = "atlas_analytics.identified_id";
 
+interface ResolvedConfig {
+  atlasAppId: string;
+  debug: boolean;
+  flushAt: number;
+  flushInterval: number;
+  requestTimeout: number;
+  normalizeScreen: (screen: string) => string;
+}
+
 export class AtlasClient {
-  private readonly config: Required<AtlasAnalyticsConfig>;
+  private readonly config: ResolvedConfig;
+  private readonly destinations: AtlasDestination[];
   private readonly storage: AtlasStorage;
   private readonly flushTimer: ReturnType<typeof setInterval>;
   private readonly appStateSubscription: NativeEventSubscription | undefined;
 
+  /** Captured-but-unsent events, shared by every destination. */
   private queue: AtlasCapturedEvent[] = [];
+  /**
+   * Per-destination retry buffers, keyed by destination name. A batch that
+   * PostHog accepted but Amplitude 500'd sits here for Amplitude only — no
+   * duplicate delivery to the destination that already took it.
+   */
+  private readonly pending = new Map<string, AtlasCapturedEvent[]>();
   private sessionId: string;
+  private sessionStartedAt: number;
   private lastScreenKey: string | null = null;
   private flushing = false;
   /** The in-flight flush, so concurrent flush() callers can await it. */
@@ -64,9 +90,7 @@ export class AtlasClient {
 
   constructor(config: AtlasAnalyticsConfig) {
     this.config = {
-      apiKey: config.apiKey,
       atlasAppId: config.atlasAppId,
-      host: (config.host ?? DEFAULT_HOST).replace(/\/+$/, ""),
       debug: config.debug ?? false,
       flushAt: Math.max(1, config.flushAt ?? DEFAULT_FLUSH_AT),
       flushInterval: Math.max(
@@ -79,10 +103,21 @@ export class AtlasClient {
       ),
       normalizeScreen: config.normalizeScreen ?? ((screen: string) => screen),
     };
+    this.destinations = resolveDestinations(config);
 
-    if (!this.config.apiKey) {
+    if (this.destinations.length === 0) {
       console.warn(
-        "[atlas-analytics] apiKey is empty — events will be captured but not delivered."
+        "[atlas-analytics] no destination configured — events will be captured " +
+          "but not delivered. Pass posthog / amplitude / mixpanel (or destinations: [...])."
+      );
+    }
+    // Retry buffers are keyed by name, so duplicates would share one and
+    // redeliver each other's failed batches.
+    const names = new Set(this.destinations.map((d) => d.name));
+    if (names.size !== this.destinations.length) {
+      console.warn(
+        "[atlas-analytics] two destinations share a name — give each " +
+          "customDestination({ name }) a unique one, or retries will cross over."
       );
     }
     if (!this.config.atlasAppId) {
@@ -93,6 +128,7 @@ export class AtlasClient {
 
     this.storage = createStorage();
     this.sessionId = generateId();
+    this.sessionStartedAt = Date.now();
     this.identityReady = this.loadIdentity();
 
     this.flushTimer = setInterval(() => {
@@ -109,6 +145,11 @@ export class AtlasClient {
         void this.flush();
       }
     });
+  }
+
+  /** Names of the destinations this client delivers to, in send order. */
+  get destinationNames(): string[] {
+    return this.destinations.map((d) => d.name);
   }
 
   /**
@@ -159,9 +200,11 @@ export class AtlasClient {
   }
 
   /**
-   * Attach a real user id. Sends a PostHog `$identify` event (with
-   * `$anon_distinct_id` so the anonymous history merges into the user) and
-   * persists the id so future launches keep it until `reset()`.
+   * Attach a real user id. Every subsequent event carries both the user id and
+   * the anonymous install id, which is what merges the pre-login history:
+   * PostHog gets an explicit `$identify` with `$anon_distinct_id`, Amplitude
+   * and Mixpanel merge from the device+user id pairing on each event. The id is
+   * persisted so future launches keep it until `reset()`.
    */
   identify(userId: string, props?: AtlasEventProperties): void {
     if (!userId) {
@@ -218,6 +261,7 @@ export class AtlasClient {
     // Session + screen chain rotate synchronously so the very next
     // trackScreen() call is already attributed to the new session.
     this.sessionId = generateId();
+    this.sessionStartedAt = Date.now();
     this.lastScreenKey = null;
     const epoch = ++this.identityEpoch;
     // Unconditional: may set undefined while installId is still loading —
@@ -260,70 +304,131 @@ export class AtlasClient {
       // identityReady never rejects, so this is safe.
       await this.identityReady;
       const batch = this.queue.splice(0, this.queue.length);
-      if (batch.length === 0) {
+      const hasPending = [...this.pending.values()].some((b) => b.length > 0);
+      if (batch.length === 0 && !hasPending) {
         return;
       }
-      // Stamp any events captured before the persisted id finished loading.
+      // Stamp any events captured before the persisted ids finished loading.
       for (const item of batch) {
+        if (!item.device_id) {
+          item.device_id = this.installId ?? "anonymous";
+        }
         if (!item.distinct_id) {
-          item.distinct_id = this.distinctId ?? "anonymous";
+          item.distinct_id = this.distinctId ?? item.device_id;
         }
       }
 
-      let body: string;
-      try {
-        body = JSON.stringify({
-          api_key: this.config.apiKey,
-          historical_migration: false,
-          batch,
-        });
-      } catch (error) {
-        // Non-serializable custom properties. Drop rather than retry forever.
-        this.warnDebug("could not serialize events — dropping batch", error);
-        return;
-      }
+      // Every destination attempts independently: one vendor being down can't
+      // hold up (or duplicate) delivery to the others.
+      await Promise.all(
+        this.destinations.map(async (destination) => {
+          const carried = this.pending.get(destination.name) ?? [];
+          const events = carried.length > 0 ? carried.concat(batch) : batch;
+          if (events.length === 0) return;
+          this.pending.set(destination.name, []);
 
-      let response: Response;
-      // Abort a stalled request after requestTimeout — without this, a hung
-      // connection would never settle, `flushing` would stay true forever,
-      // and delivery would be dead for the rest of the process lifetime.
-      const abort = new AbortController();
-      const abortTimer = setTimeout(
-        () => abort.abort(),
-        this.config.requestTimeout
+          const verdict = await this.deliver(destination, events);
+          if (verdict === "retry") {
+            this.requeue(destination.name, events);
+            this.warnDebug(
+              `${destination.name}: delivery failed — ${events.length} event(s) requeued`
+            );
+          } else if (verdict === "drop") {
+            this.warnDebug(
+              `${destination.name}: dropping ${events.length} event(s) (permanent failure)`
+            );
+          } else {
+            this.logDebug(`${destination.name}: flushed ${events.length} event(s)`);
+          }
+        })
       );
-      try {
-        response = await fetch(`${this.config.host}/batch/`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          signal: abort.signal,
-        });
-      } catch (error) {
-        // Includes the AbortError from the timeout above — treated like any
-        // transient network failure: keep the events for the next flush.
-        this.requeue(batch);
-        this.warnDebug("network error while flushing — events requeued", error);
-        return;
-      } finally {
-        clearTimeout(abortTimer);
-      }
-
-      if (response.ok) {
-        this.logDebug(`flushed ${batch.length} event(s)`);
-      } else if (response.status === 429 || response.status >= 500) {
-        // Transient — keep the events for the next flush.
-        this.requeue(batch);
-        this.warnDebug(`HTTP ${response.status} from PostHog — events requeued`);
-      } else {
-        // 4xx (bad api key, malformed payload): retrying would loop forever.
-        this.warnDebug(
-          `HTTP ${response.status} from PostHog — dropping ${batch.length} event(s)`
-        );
-      }
     } finally {
       this.flushing = false;
     }
+  }
+
+  /** One delivery attempt for one destination. Never throws. */
+  private async deliver(
+    destination: AtlasDestination,
+    events: AtlasCapturedEvent[]
+  ): Promise<AtlasDeliveryVerdict> {
+    if (destination.send) {
+      try {
+        return await destination.send(events);
+      } catch (error) {
+        this.warnDebug(`${destination.name}: send() threw`, error);
+        return "retry";
+      }
+    }
+
+    let requests: AtlasDestinationRequest[];
+    try {
+      requests = destination.buildRequests(events);
+    } catch (error) {
+      // Non-serializable custom properties, or a mapper bug. Dropping beats
+      // retrying the same bytes forever.
+      this.warnDebug(
+        `${destination.name}: could not build the request — dropping batch`,
+        error
+      );
+      return "drop";
+    }
+    if (requests.length === 0) {
+      return "ok"; // nothing this vendor wants from these events
+    }
+
+    for (const request of requests) {
+      const verdict = await this.send(destination, request);
+      // A partial failure retries the whole batch for this destination; the
+      // per-event insert ids make the redelivered half a dedupe, not a double
+      // count.
+      if (verdict !== "ok") return verdict;
+    }
+    return "ok";
+  }
+
+  private async send(
+    destination: AtlasDestination,
+    request: AtlasDestinationRequest
+  ): Promise<AtlasDeliveryVerdict> {
+    let response: Response;
+    // Abort a stalled request after requestTimeout — without this, a hung
+    // connection would never settle, `flushing` would stay true forever,
+    // and delivery would be dead for the rest of the process lifetime.
+    const abort = new AbortController();
+    const abortTimer = setTimeout(
+      () => abort.abort(),
+      this.config.requestTimeout
+    );
+    try {
+      response = await fetch(request.url, {
+        method: "POST",
+        headers: request.headers,
+        body: request.body,
+        signal: abort.signal,
+      });
+    } catch (error) {
+      // Includes the AbortError from the timeout above — treated like any
+      // transient network failure: keep the events for the next flush.
+      this.warnDebug(`${destination.name}: network error while flushing`, error);
+      return "retry";
+    } finally {
+      clearTimeout(abortTimer);
+    }
+
+    let body = "";
+    if (destination.inspectBody && typeof response.text === "function") {
+      body = await response.text().catch(() => "");
+    }
+    const classify = destination.classify ?? defaultClassify;
+    const verdict = classify(response.status, body);
+    if (verdict !== "ok") {
+      this.warnDebug(
+        `${destination.name}: HTTP ${response.status} → ${verdict}`,
+        body.slice(0, 200)
+      );
+    }
+    return verdict;
   }
 
   /**
@@ -348,13 +453,22 @@ export class AtlasClient {
     if (this.queue.length >= MAX_QUEUE_SIZE) {
       this.queue.shift(); // Drop the oldest — recent behavior matters more.
     }
+    // An explicit override (identify()'s frozen target id) always wins;
+    // otherwise stamped at flush time if identity hasn't loaded yet. The
+    // flush-time restamp only fills EMPTY ids, so overrides survive it.
+    const effectiveId = distinctIdOverride ?? this.distinctId ?? "";
     this.queue.push({
       event,
-      // An explicit override (identify()'s frozen target id) always wins;
-      // otherwise stamped at flush time if identity hasn't loaded yet. The
-      // flush-time restamp only fills EMPTY ids, so overrides survive it.
-      distinct_id: distinctIdOverride ?? this.distinctId ?? "",
+      distinct_id: effectiveId,
+      device_id: this.installId ?? "",
+      // Anything other than the install id IS an identified id. While the
+      // install id is still loading, a non-empty effective id can only have
+      // come from identify().
+      user_id:
+        effectiveId && effectiveId !== this.installId ? effectiveId : null,
+      insert_id: generateId(),
       timestamp: new Date().toISOString(),
+      session_started_at: this.sessionStartedAt,
       properties: {
         ...properties,
         // Contract fields last, so custom properties can never clobber them.
@@ -385,11 +499,13 @@ export class AtlasClient {
     }
   }
 
-  private requeue(batch: AtlasCapturedEvent[]): void {
-    this.queue = batch.concat(this.queue);
-    if (this.queue.length > MAX_QUEUE_SIZE) {
-      this.queue = this.queue.slice(this.queue.length - MAX_QUEUE_SIZE);
+  private requeue(name: string, batch: AtlasCapturedEvent[]): void {
+    const existing = this.pending.get(name) ?? [];
+    let merged = batch.concat(existing);
+    if (merged.length > MAX_QUEUE_SIZE) {
+      merged = merged.slice(merged.length - MAX_QUEUE_SIZE);
     }
+    this.pending.set(name, merged);
   }
 
   private logDebug(message: string, ...extra: unknown[]): void {

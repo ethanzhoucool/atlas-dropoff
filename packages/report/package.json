@@ -1,7 +1,7 @@
 {
   "name": "@revyl/atlas-report",
-  "version": "0.1.0",
-  "description": "Turn a Revyl Atlas screen map + PostHog atlas_screen events into a single self-contained HTML drop-off report",
+  "version": "0.2.0",
+  "description": "Turn a Revyl Atlas screen map + atlas_screen events (PostHog, Amplitude, or Mixpanel) into a single self-contained HTML drop-off report",
   "type": "module",
   "bin": {
     "atlas-report": "./dist/cli.js"
@@ -11,6 +11,7 @@
     "dist",
     "README.md",
     "counts.example.json",
+    "events.example.jsonl",
     "screen-map.example.json"
   ],
   "engines": {
@@ -18,6 +19,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "npm run build",
     "test": "node --test test/*.test.cjs",
     "prepublishOnly": "npm run build"
@@ -30,6 +32,8 @@
     "revyl",
     "atlas",
     "posthog",
+    "amplitude",
+    "mixpanel",
     "funnel",
     "drop-off",
     "mobile-analytics"

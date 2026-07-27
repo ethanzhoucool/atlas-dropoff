@@ -54,7 +54,23 @@ export interface AtlasGraph {
   edges: AtlasEdge[];
 }
 
-/* ── Counts (PostHog query result / --counts file) ──────────── */
+/* ── Counts (analytics query result / offline file) ─────────── */
+
+/**
+ * Where the numbers came from. The live sources query a vendor's API; the
+ * file sources read something already on disk.
+ */
+export type SourceId =
+  | 'posthog'
+  | 'amplitude'
+  | 'mixpanel'
+  | 'counts-file'
+  | 'events-file';
+
+/** True for sources that hit a vendor API (vs. reading a local file). */
+export function isLiveSource(source: SourceId): boolean {
+  return source === 'posthog' || source === 'amplitude' || source === 'mixpanel';
+}
 
 export interface ScreenCount {
   users: number;
@@ -68,7 +84,7 @@ export interface TransitionCount {
 }
 
 export interface Counts {
-  source: 'posthog' | 'counts-file';
+  source: SourceId;
   /** Optional label override, e.g. "Last 28 days" (counts files may set it). */
   date_range?: string;
   screens: Record<string, ScreenCount>;
@@ -81,7 +97,7 @@ export interface Counts {
   leavers?: Record<string, number>;
 }
 
-/* ── Screen mapping (PostHog keys → Atlas nodes) ────────────── */
+/* ── Screen mapping (event keys → Atlas nodes) ───────────────── */
 
 export interface MatchedScreen {
   key: string;
@@ -167,7 +183,7 @@ export interface Totals {
 }
 
 export interface Analytics {
-  source: 'posthog' | 'counts-file';
+  source: SourceId;
   disclaimer: string;
   app_id: string;
   date_range: string;
@@ -219,7 +235,7 @@ export interface RenderEdge {
 
 export interface RenderPayload {
   app: { name: string; id: string; viewer: string };
-  source: 'posthog' | 'counts-file';
+  source: SourceId;
   source_label: string;
   disclaimer: string;
   date_range: string;

@@ -4,9 +4,12 @@
  *
  * Typical integration is just:
  *
- *   <AtlasProvider apiKey="phc_..." atlasAppId="...">
+ *   <AtlasProvider posthog={{ apiKey: "phc_..." }} atlasAppId="...">
  *     <App />
  *   </AtlasProvider>
+ *
+ * Swap `posthog` for `amplitude={{ apiKey }}` or `mixpanel={{ token }}` — or
+ * pass several to dual-write during a migration.
  */
 
 import { getClient } from "./client";
@@ -14,6 +17,24 @@ import type { AtlasEventProperties, TrackScreenOptions } from "./types";
 
 export { initAtlasAnalytics } from "./client";
 export type { AtlasClient } from "./client";
+
+export {
+  amplitudeDestination,
+  customDestination,
+  defaultClassify,
+  mixpanelDestination,
+  posthogDestination,
+  resolveDestinations,
+} from "./destinations";
+export type {
+  AmplitudeDestinationConfig,
+  AtlasDeliveryVerdict,
+  AtlasDestination,
+  AtlasDestinationRequest,
+  CustomDestinationConfig,
+  MixpanelDestinationConfig,
+  PostHogDestinationConfig,
+} from "./destinations";
 
 export { AtlasProvider, AtlasAutoTrack } from "./provider";
 export type { AtlasProviderProps } from "./provider";

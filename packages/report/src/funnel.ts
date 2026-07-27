@@ -1,5 +1,5 @@
 /* ============================================================
-   funnel.ts — join mapped PostHog counts onto the Atlas graph
+   funnel.ts — join mapped analytics counts onto the Atlas graph
    and compute the drop-off analytics intermediate (the same
    shape as atlas-funnel's analytics.json).
 
@@ -66,7 +66,7 @@ const pctStr = (x: number): string => `${Math.round(x * 100)}%`;
 /* ── transitions keyed by Atlas node ids ────────────────────── */
 
 /**
- * Aggregate PostHog (src,dst) transition counts onto Atlas node ids.
+ * Aggregate (src,dst) transition counts onto Atlas node ids.
  * Transitions with an unmapped endpoint (or self-loops) are dropped.
  */
 export function buildNodeTransitions(
@@ -83,27 +83,27 @@ export function buildNodeTransitions(
       inner = new Map<string, number>();
       out.set(src, inner);
     }
-    // Multiple PostHog key-pairs can collapse onto one (src,dst) node pair
+    // Multiple screen key-pairs can collapse onto one (src,dst) node pair
     // when several keys map to a single node. count(DISTINCT …) values are
     // NOT additive across key-pairs (one person seen under two keys would be
     // double-counted by a sum), so take the MAX — a guaranteed lower bound
     // on the true distinct union. computeAnalytics warns whenever any node
     // has >1 mapped key.
-    // TODO(live mode): the exact fix is to re-query PostHog with
-    // count(DISTINCT person_id) over the union of keys per node pair.
+    // (The sequential funnel is exact regardless: each step matches the UNION
+    // of its node's keys in one query, so aliases dedupe there.)
     inner.set(dst, Math.max(inner.get(dst) ?? 0, t.users));
   }
   return out;
 }
 
 /**
- * Distinct users / raw events per Atlas node, plus the PostHog keys mapped to
+ * Distinct users / raw events per Atlas node, plus the screen keys mapped to
  * each node. When multiple keys map to one node, count(DISTINCT …) values are
  * NOT additive (one person under two keys would be double-counted by a sum), so
  * users take the MAX — a guaranteed lower bound on the true distinct union. Raw
- * event counts ARE additive, so those are summed.
- * TODO(live mode): the exact fix is to re-query count(DISTINCT person_id) over
- * the union of keys per node.
+ * event counts ARE additive, so those are summed. (These feed the flow map and
+ * the drawer; the funnel cohort itself comes from a per-step union query, which
+ * has no such approximation.)
  */
 export function nodeUsersFromCounts(
   counts: Counts,
@@ -139,7 +139,7 @@ export function computeAnalytics(
   const { users, events, keysByNode } = nodeUsersFromCounts(counts, mapping);
   const multiKeyNodes = [...keysByNode.entries()].filter(([, keys]) => keys.length > 1);
   if (multiKeyNodes.length > 0) {
-    warn(`! ${multiKeyNodes.length} Atlas node(s) have multiple PostHog keys mapped — distinct-user`);
+    warn(`! ${multiKeyNodes.length} Atlas node(s) have multiple screen keys mapped — distinct-user`);
     warn('  counts use max(keys), a lower bound on the true distinct union, so they are approximate:');
     for (const [id, keys] of multiKeyNodes) {
       warn(`    ${byId.get(id)?.name ?? id} ← ${keys.join(', ')}`);
@@ -147,7 +147,7 @@ export function computeAnalytics(
   }
   if (users.size === 0) {
     throw new Error(
-      'No PostHog screen keys matched any Atlas node — nothing to report. ' +
+      'No screen keys matched any Atlas node — nothing to report. ' +
       'Pass --screen-map to map your event keys onto Atlas screens.',
     );
   }
@@ -366,7 +366,7 @@ export function computeAnalytics(
  * which case start at the busiest screen overall so step 2 can never dwarf
  * step 1 (>100% conversions). Then repeatedly follow the highest-volume
  * observed transition to an unvisited screen with data.
- * If PostHog recorded no transitions at all (e.g. a screens-only counts
+ * If the source recorded no transitions at all (e.g. a screens-only counts
  * file), walk the Atlas structure instead: primary edges first, then by
  * observation count.
  */
@@ -451,7 +451,7 @@ function insightFor(
     return (
       `${pctStr(exitShare)} of users who reach this screen go nowhere next — ` +
       (isBiggestLeakSource ? 'the single biggest leak in the funnel. ' : 'a major leak. ') +
-      'Watch PostHog session replays for this screen and re-run the step in Revyl Atlas.'
+      'Watch session replays for this screen and re-run the step in Revyl Atlas.'
     );
   }
   if (h === 'warn') {

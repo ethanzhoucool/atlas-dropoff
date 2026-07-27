@@ -15,12 +15,25 @@ import * as path from 'node:path';
 import { healthOf, prettyName } from './funnel.js';
 import type {
   Analytics, AtlasGraph, AtlasNode, Health, RenderEdge, RenderNode, RenderPayload,
+  SourceId,
 } from './types.js';
+import { isLiveSource } from './types.js';
 
 export interface RenderOptions {
   /** Display name for the app (graph name, or the --app argument). */
   appName: string;
+  /** Text of the source pill. Defaults per source id. */
+  sourceLabel?: string;
 }
+
+/** Fallback pill text when the caller doesn't pass the source's own label. */
+const DEFAULT_SOURCE_LABELS: Record<SourceId, string> = {
+  posthog: '● PostHog · live',
+  amplitude: '● Amplitude · live',
+  mixpanel: '● Mixpanel · live',
+  'counts-file': '● Counts file · offline',
+  'events-file': '● Raw events · offline file',
+};
 
 /* ── payload assembly ───────────────────────────────────────── */
 
@@ -147,7 +160,7 @@ export function renderReport(
 
   const first = funnel[0];
   const last = funnel[funnel.length - 1];
-  const live = analytics.source === 'posthog';
+  const live = isLiveSource(analytics.source);
   const payload: RenderPayload = {
     app: {
       name: opts.appName,
@@ -155,7 +168,7 @@ export function renderReport(
       viewer: `https://app.revyl.ai/apps/${atlas.app_id}/atlas`,
     },
     source: analytics.source,
-    source_label: live ? '● PostHog · live' : '● PostHog counts · offline file',
+    source_label: opts.sourceLabel ?? DEFAULT_SOURCE_LABELS[analytics.source],
     disclaimer: analytics.disclaimer,
     date_range: analytics.date_range,
     funnel_title:
@@ -164,7 +177,7 @@ export function renderReport(
         : `Primary flow · ${first.label}`,
     funnel_sub:
       'Each bar narrows to the share of users still in the flow; the red tail is where they ' +
-      'dropped. Every step is a real screen from Revyl Atlas; counts are distinct PostHog users ' +
+      'dropped. Every step is a real screen from Revyl Atlas; counts are distinct users ' +
       `over ${analytics.date_range.toLowerCase()}. Click any row for screen-level detail.`,
     totals: analytics.totals,
     funnel,

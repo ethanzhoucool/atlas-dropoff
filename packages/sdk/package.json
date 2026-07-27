@@ -1,7 +1,7 @@
 {
   "name": "@revyl/atlas-analytics",
-  "version": "0.1.0",
-  "description": "Tiny drop-in screen analytics for Expo & React Native. One provider, auto screen tracking, zero native modules — events shaped for Revyl Atlas drop-off reports.",
+  "version": "0.2.0",
+  "description": "Tiny drop-in screen analytics for Expo & React Native. One provider, auto screen tracking, zero native modules \u2014 sends to PostHog, Amplitude or Mixpanel, shaped for Revyl Atlas drop-off reports.",
   "keywords": [
     "react-native",
     "expo",
@@ -10,6 +10,8 @@
     "analytics",
     "screen-tracking",
     "posthog",
+    "amplitude",
+    "mixpanel",
     "revyl",
     "atlas"
   ],

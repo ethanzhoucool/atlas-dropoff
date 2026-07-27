@@ -1,5 +1,5 @@
 /* ============================================================
-   map.ts — map PostHog `screen` keys onto Atlas nodes.
+   map.ts — map event `screen` keys onto Atlas nodes.
 
    Resolution order per key:
      1. explicit --screen-map entry (value may be node id or name)
@@ -93,7 +93,7 @@ export function printMappingReport(mapping: Mapping, log: (line: string) => void
   const pad = (s: string, w: number): string => (s.length >= w ? s : s + ' '.repeat(w - s.length));
 
   log('── screen mapping ' + '─'.repeat(38));
-  log(`  matched PostHog keys → Atlas nodes (${mapping.matched.length}):`);
+  log(`  matched screen keys → Atlas nodes (${mapping.matched.length}):`);
   for (const m of mapping.matched) {
     const tag = m.via === 'normalized' ? '  (fuzzy)' : m.via === 'explicit' ? '  (--screen-map)' : '';
     log(`    ${pad(m.key, 36)} → ${m.nodeName}${tag}`);
@@ -103,7 +103,7 @@ export function printMappingReport(mapping: Mapping, log: (line: string) => void
     for (const e of mapping.explicitMisses) log(`    ${pad(e.key, 36)} → ${e.target}`);
   }
   if (mapping.unmatched.length) {
-    log(`  ! unmatched PostHog keys (${mapping.unmatched.length}) — carry no data into the report:`);
+    log(`  ! unmatched screen keys (${mapping.unmatched.length}) — carry no data into the report:`);
     for (const key of mapping.unmatched) log(`    ${key}`);
   }
   if (mapping.nodesWithoutData.length) {

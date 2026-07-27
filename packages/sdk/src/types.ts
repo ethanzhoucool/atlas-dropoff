@@ -2,20 +2,49 @@
  * Public types for @revyl/atlas-analytics.
  */
 
+import type { AmplitudeDestinationConfig } from "./destinations/amplitude";
+import type { MixpanelDestinationConfig } from "./destinations/mixpanel";
+import type { PostHogDestinationConfig } from "./destinations/posthog";
+import type { AtlasDestination } from "./destinations/types";
+
 /** Configuration accepted by `initAtlasAnalytics()` and `<AtlasProvider>`. */
 export interface AtlasAnalyticsConfig {
-  /** PostHog project API key (`phc_...`). */
-  apiKey: string;
   /**
    * Revyl Atlas app id. Stamped on every event as `atlas_app_id` — this is
    * how the drop-off report joins events to your Atlas map.
    */
   atlasAppId: string;
+
+  /* ── where the events go (at least one) ───────────────────────────────── */
+
+  /** Send to PostHog. */
+  posthog?: PostHogDestinationConfig;
+  /** Send to Amplitude. */
+  amplitude?: AmplitudeDestinationConfig;
+  /** Send to Mixpanel. */
+  mixpanel?: MixpanelDestinationConfig;
   /**
-   * PostHog ingestion host. Defaults to `https://us.i.posthog.com`
-   * (use `https://eu.i.posthog.com` for EU Cloud).
+   * Extra destinations — `customDestination({ name, send })` for anything not
+   * shipped here (Segment, RudderStack, your own collector). Combined with the
+   * shorthands above, so an app can dual-write during a migration.
    */
+  destinations?: AtlasDestination[];
+  /**
+   * Data region for every destination that didn't set an explicit `host`.
+   * Default: `"us"`.
+   */
+  region?: "us" | "eu";
+
+  /**
+   * Legacy PostHog project API key (`phc_...`), equivalent to
+   * `posthog: { apiKey }`. Ignored when `posthog` is set.
+   */
+  apiKey?: string;
+  /** Legacy PostHog ingestion host, equivalent to `posthog: { host }`. */
   host?: string;
+
+  /* ── behavior ─────────────────────────────────────────────────────────── */
+
   /** Log SDK activity and delivery warnings to the console. Default: false. */
   debug?: boolean;
   /** Flush as soon as this many events are queued. Default: 20. */
@@ -56,6 +85,8 @@ export type AtlasEventProperties = Record<string, unknown>;
 /**
  * The exact property payload of every `atlas_screen` event.
  * A separate report generator depends on this shape — do not change casually.
+ * Every destination sends these same fields; only the envelope around them
+ * (identity, timestamps) is vendor-specific.
  */
 export interface AtlasScreenEventProperties {
   /**
@@ -77,17 +108,34 @@ export interface AtlasScreenEventProperties {
   /**
    * Mirrors the screen key as a plain property for PostHog filtering. (Note:
    * PostHog's native "Screens" UI keys off events literally named `$screen`,
-   * which this SDK does not emit.)
+   * which this SDK does not emit.) Stripped from Amplitude/Mixpanel payloads
+   * along with the rest of the `$`-prefixed PostHog dialect.
    */
   $screen_name: string;
 }
 
-/** One event as it appears in the `batch` array POSTed to PostHog. */
+/**
+ * One captured event, in the SDK's canonical (vendor-neutral) form.
+ * Destinations map this into their own envelope.
+ */
 export interface AtlasCapturedEvent {
   event: string;
+  /**
+   * The vendor-facing id: the identified user id when known, else the
+   * anonymous install id. (PostHog's `distinct_id`; Mixpanel's `distinct_id`,
+   * which is prefixed `$device:` while anonymous.)
+   */
   distinct_id: string;
+  /** Anonymous per-install id. Amplitude `device_id` / Mixpanel `$device_id`. */
+  device_id: string;
+  /** Identified user id, or null while anonymous. */
+  user_id: string | null;
+  /** Stable per capture, so a retried batch dedupes instead of double-counting. */
+  insert_id: string;
   /** ISO 8601 timestamp, captured at enqueue time. */
   timestamp: string;
+  /** Session start in ms since epoch — Amplitude's numeric `session_id`. */
+  session_started_at: number;
   properties: AtlasEventProperties;
 }
 
