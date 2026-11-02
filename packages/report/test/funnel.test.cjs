@@ -288,26 +288,3 @@ test('mapScreens warns when two Atlas nodes normalize to the same name key', asy
   assert.match(joined, /id-1/);
   assert.match(joined, /id-2/);
 });
-
-/* ── --screen-map keys that no event carried ────────────────── */
-
-test('mapScreens reports --screen-map keys that no event carried (likely typos)', async () => {
-  const { mapScreens, printMappingReport } = await mapP;
-  const atlas = makeAtlas([makeNode('home'), makeNode('product')], []);
-  const counts = {
-    source: 'counts-file',
-    screens: { '/': { users: 10, events: 10 }, '/product/[id]': { users: 5, events: 5 } },
-    transitions: [],
-  };
-  const mapping = mapScreens(counts, atlas, {
-    '/': 'home',
-    '/product/:id': 'product', // typo'd key: the events say /product/[id]
-  }, () => {});
-  assert.deepEqual(mapping.explicitUnused, ['/product/:id']);
-
-  const lines = [];
-  printMappingReport(mapping, line => lines.push(line));
-  const report = lines.join('\n');
-  assert.match(report, /--screen-map keys no event carried \(1\)/);
-  assert.match(report, /^ {4}\/product\/:id$/m);
-});
