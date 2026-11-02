@@ -114,6 +114,14 @@ export const FUNNEL_MAX_STEPS = 32;
  * (this also makes many-to-one exact for the funnel). Step key arrays are bound
  * as `values` ({step0}, {step1}, …), never spliced into SQL. Returns one row of
  * N counts (s1..sN); the outer aggregate is a single row, so no LIMIT applies.
+ *
+ * The timestamp goes through `toUnixTimestamp()`. PostHog stores `timestamp`
+ * as DateTime64(6), and ClickHouse's windowFunnel only accepts unsigned
+ * integers, Date or DateTime. Passed the raw column it fails with
+ * ILLEGAL_TYPE_OF_ARGUMENT, and the CLI would quietly fall back to the
+ * estimate. Epoch seconds (UInt32) keep the window in seconds. Steps in the
+ * same second still count in order, because windowFunnel breaks timestamp ties
+ * by condition index.
  */
 export function funnelQuery(days: number, windowSeconds: number, stepCount: number): string {
   assertDays(days);
@@ -134,7 +142,7 @@ export function funnelQuery(days: number, windowSeconds: number, stepCount: numb
     'FROM (',
     '  SELECT person_id,',
     `    windowFunnel(${windowSeconds})(`,
-    '      timestamp,',
+    '      toUnixTimestamp(timestamp),',
     conds.join(',\n'),
     '    ) AS level',
     '  FROM events',
