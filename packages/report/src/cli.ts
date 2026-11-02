@@ -48,7 +48,8 @@ OPTIONS
   --days <n>            Lookback window in days, 1-3650 (default: 28)
   --timeout <s>         Per-query timeout in seconds (default: 60)
   --funnel-window <s>   Sequential-funnel conversion window in seconds
-                        (live mode; default: the full lookback, days*86400)
+                        (live sources and --events; default: the full
+                        lookback, days*86400)
   --screen-map <file>   JSON map of event screen keys -> Atlas node id/name
   --out <file>          Output HTML path (default: ${DEFAULT_OUT})
   --atlas-cache <dir>   Atlas graph + screenshot cache (default: .atlas-cache/<app>)
