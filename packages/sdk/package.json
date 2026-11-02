@@ -38,7 +38,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "npm run build",
-    "test": "node --test \"test/*.test.cjs\"",
+    "test": "node --test test/*.test.cjs",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {

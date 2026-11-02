@@ -16,6 +16,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
     "report": "node packages/report/dist/cli.js",
     "demo:seed": "node demo/seed-crate.cjs",
     "demo:report": "node packages/report/dist/cli.js generate --app cda16afc-2b9c-4042-a0c2-d863dc3c9ec6 --counts demo/crate-counts.json --screen-map demo/crate-screen-map.json --atlas-cache demo/.atlas-cache/crate --out demo/crate-report.html"
