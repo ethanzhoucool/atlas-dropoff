@@ -113,6 +113,11 @@ export interface Mapping {
   unmatched: string[];
   /** --screen-map entries whose target no Atlas node matched. */
   explicitMisses: Array<{ key: string; target: string }>;
+  /**
+   * --screen-map keys that no event in the window carried: a typo'd route key
+   * (`/product/:id` vs `/product/[id]`), or a screen nobody visited.
+   */
+  explicitUnused: string[];
   nodesWithoutData: Array<{ id: string; name: string }>;
 }
 

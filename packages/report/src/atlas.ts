@@ -129,7 +129,7 @@ export async function loadAtlas(opts: AtlasFetchOptions): Promise<AtlasGraph> {
   let graph: AtlasGraph;
   if (!opts.refresh && fs.existsSync(cachedPath)) {
     opts.log(`· using cached Atlas graph (${cachedPath}) — pass --refresh to re-fetch`);
-    graph = JSON.parse(fs.readFileSync(cachedPath, 'utf8')) as AtlasGraph;
+    graph = readCachedGraph(cachedPath, opts.cacheDir);
     resolveScreenshotPaths(graph, opts.cacheDir);
   } else {
     graph = await fetchAtlas(opts);
@@ -146,6 +146,36 @@ export async function loadAtlas(opts: AtlasFetchOptions): Promise<AtlasGraph> {
     opts.log(`· app name: ${name} (via revyl atlas apps)`);
   }
   return graph;
+}
+
+/**
+ * Parse and shape-check a cached atlas.json. A truncated or hand-edited cache
+ * used to surface as a bare "Unexpected end of JSON input" or "graph.nodes is
+ * not iterable", naming neither the file nor the fix. A missing app_id is just
+ * as bad: every source filters events on it, so the report would come back
+ * empty.
+ */
+function readCachedGraph(cachedPath: string, cacheDir: string): AtlasGraph {
+  const fix = `Re-fetch it with --refresh (or delete ${cacheDir}).`;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(cachedPath, 'utf8'));
+  } catch (err) {
+    throw new Error(`Cached Atlas graph ${cachedPath} is unreadable (${(err as Error).message}). ${fix}`);
+  }
+  const g = raw as Partial<AtlasGraph> | null;
+  const problem =
+    typeof g !== 'object' || g === null || Array.isArray(g)
+      ? 'it is not a JSON object'
+      : !Array.isArray(g.nodes) || !Array.isArray(g.edges)
+        ? 'it has no nodes/edges arrays'
+        : typeof g.app_id !== 'string' || g.app_id === ''
+          ? 'it has no app_id'
+          : null;
+  if (problem) {
+    throw new Error(`Cached Atlas graph ${cachedPath} is malformed: ${problem}. ${fix}`);
+  }
+  return g as AtlasGraph;
 }
 
 /** Look up the friendly app name for an Atlas app id. Never throws. */
