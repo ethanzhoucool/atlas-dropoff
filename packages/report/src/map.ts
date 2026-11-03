@@ -80,12 +80,16 @@ export function mapScreens(
     }
   }
 
+  const explicitUnused = Object.keys(explicit).filter(
+    key => !Object.prototype.hasOwnProperty.call(counts.screens, key),
+  );
+
   const mappedIds = new Set(screenToNode.values());
   const nodesWithoutData = atlas.nodes
     .filter(n => !mappedIds.has(n.id))
     .map(n => ({ id: n.id, name: n.name }));
 
-  return { screenToNode, matched, unmatched, explicitMisses, nodesWithoutData };
+  return { screenToNode, matched, unmatched, explicitMisses, explicitUnused, nodesWithoutData };
 }
 
 /** Human-readable mapping report, one line at a time (send to stderr). */
@@ -101,6 +105,13 @@ export function printMappingReport(mapping: Mapping, log: (line: string) => void
   if (mapping.explicitMisses.length) {
     log(`  ! --screen-map targets not found in Atlas (${mapping.explicitMisses.length}):`);
     for (const e of mapping.explicitMisses) log(`    ${pad(e.key, 36)} → ${e.target}`);
+  }
+  if (mapping.explicitUnused.length) {
+    log(
+      `  · --screen-map keys no event carried (${mapping.explicitUnused.length}) — ` +
+      'a typo in the route key, or no traffic in the window:',
+    );
+    for (const key of mapping.explicitUnused) log(`    ${key}`);
   }
   if (mapping.unmatched.length) {
     log(`  ! unmatched screen keys (${mapping.unmatched.length}) — carry no data into the report:`);

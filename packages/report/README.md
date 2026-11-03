@@ -305,8 +305,10 @@ also resolve):
 Without a screen map, keys are auto-matched: exact match on node name/id first,
 then a normalized match (lowercased, separators stripped, so `onboarding/welcome`
 matches `Onboarding_Welcome`). A mapping report is printed to stderr on every run:
-matched keys, unmatched screen keys, and Atlas screens with no analytics data.
-Unmatched keys never crash the run. They simply carry no data.
+matched keys, unmatched screen keys, `--screen-map` keys that no event carried
+(usually a typo'd route key, e.g. `/product/:id` for `/product/[id]`), and Atlas
+screens with no analytics data. Unmatched keys never crash the run. They simply
+carry no data.
 
 ## How the funnel is derived
 
