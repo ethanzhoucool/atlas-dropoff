@@ -39,7 +39,14 @@ export function resolveDestinations(
   if (posthog?.apiKey) out.push(posthogDestination(posthog, region));
   if (config.amplitude?.apiKey) out.push(amplitudeDestination(config.amplitude, region));
   if (config.mixpanel?.token) out.push(mixpanelDestination(config.mixpanel, region));
-  if (config.destinations) out.push(...config.destinations);
+  // Skip falsy entries (`[__DEV__ ? null : dest]`, `[flag && dest]` from JS)
+  // instead of letting the client trip over them during the provider's first
+  // render, which would crash the app at launch.
+  if (Array.isArray(config.destinations)) {
+    for (const destination of config.destinations) {
+      if (destination) out.push(destination);
+    }
+  }
 
   return out;
 }

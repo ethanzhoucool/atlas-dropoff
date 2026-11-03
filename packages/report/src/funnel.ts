@@ -151,6 +151,15 @@ export function computeAnalytics(
       'Pass --screen-map to map your event keys onto Atlas screens.',
     );
   }
+  // Matched keys can still all carry 0 distinct users (a counts file with
+  // zeroed rows). Without this, buildFunnelPath has no screen to start from.
+  const screensWithData = [...users.values()].filter(u => u > 0).length;
+  if (screensWithData === 0) {
+    throw new Error(
+      `${users.size} screen key(s) matched Atlas nodes, but every one has 0 distinct users — ` +
+      'nothing to report. Check the counts source and the --days window.',
+    );
+  }
 
   // Best Atlas edge per (src,dst) pair — used for transition labels.
   const edgeByPair = new Map<string, AtlasEdge>();
@@ -219,7 +228,11 @@ export function computeAnalytics(
         note: '',
       };
     }
-    const conv = cohort[i - 1] > 0 ? cohort[i] / cohort[i - 1] : 0;
+    // Nobody reached the previous step (e.g. an exact funnel where no one
+    // completed step i-1 in order), so nobody could drop here. Reporting a
+    // "−100%" drop of 0 users would be noise, and it could win biggest leak.
+    const prevEmpty = cohort[i - 1] <= 0;
+    const conv = prevEmpty ? 0 : cohort[i] / cohort[i - 1];
     return {
       step: i + 1,
       screen_id: id,
@@ -227,7 +240,7 @@ export function computeAnalytics(
       label: prettyName(node),
       users: cohort[i],
       conversion_from_prev: round3(conv),
-      drop_pct: round3(Math.max(0, 1 - conv)),
+      drop_pct: prevEmpty ? 0 : round3(Math.max(0, 1 - conv)),
       lost: cohort[i - 1] - cohort[i],
       note: '',
     };
@@ -257,9 +270,11 @@ export function computeAnalytics(
     const prevLabel = steps[i - 1].label;
     s.note =
       (i === biggestIdx ? 'Biggest leak. ' : '') +
-      (s.drop_pct > 0
-        ? `−${Math.round(s.drop_pct * 100)}% from “${prevLabel}” — ${fmtInt(s.lost)} users lost.`
-        : `No measurable drop from “${prevLabel}”.`);
+      (steps[i - 1].users <= 0
+        ? `No users reached “${prevLabel}”, so none could continue.`
+        : s.drop_pct > 0
+          ? `−${Math.round(s.drop_pct * 100)}% from “${prevLabel}” — ${fmtInt(s.lost)} users lost.`
+          : `No measurable drop from “${prevLabel}”.`);
   }
 
   /* per-screen stats for every node that saw traffic */
@@ -343,7 +358,9 @@ export function computeAnalytics(
       Math.max(0, Math.round((converted / Math.max(1, sessions)) * 1000) / 10),
     ),
     screens_mapped: atlas.nodes.length,
-    screens_with_data: users.size,
+    // Nodes with real traffic. users.size also counts nodes whose mapped keys
+    // carry 0 users, which overstated the KPI's "N saw traffic".
+    screens_with_data: screensWithData,
     biggest_leak: biggest,
   };
 
@@ -356,6 +373,32 @@ export function computeAnalytics(
     funnel: steps,
     screens,
   };
+}
+
+/* ── sequential cohort sanity check ─────────────────────────── */
+
+/**
+ * Why a sequential cohort from a source can't be used for `path`, or null if
+ * it can. Step 1 of an exact funnel counts the distinct users who viewed the
+ * entry screen. Zero there, while the per-screen counts show viewers, means the
+ * funnel query matched nothing (wrong filter, wrong property name). Reporting
+ * that as "0 users entered" would be worse than the min-cohort estimate.
+ */
+export function sequentialCohortProblem(
+  cohort: number[],
+  path: string[],
+  entryUsers: number,
+): string | null {
+  if (cohort.length !== path.length) {
+    return `it returned ${cohort.length} step(s) for a ${path.length}-step path`;
+  }
+  if (path.length > 0 && !(cohort[0] > 0) && entryUsers > 0) {
+    return (
+      `it counted 0 users at the entry step, though ${fmtInt(entryUsers)} users viewed that ` +
+      'screen (the funnel query likely matched nothing)'
+    );
+  }
+  return null;
 }
 
 /* ── funnel path discovery ──────────────────────────────────── */
@@ -377,6 +420,9 @@ export function buildFunnelPath(
   transitions: Map<string, Map<string, number>>,
 ): string[] {
   const withData = atlas.nodes.filter(n => (users.get(n.id) ?? 0) > 0);
+  // No screen with traffic means no funnel. Return an empty path rather than
+  // reducing an empty array; computeAnalytics reports why.
+  if (withData.length === 0) return [];
   const u = (n: AtlasNode): number => users.get(n.id) ?? 0;
   const busiest = withData.reduce((a, b) => (u(b) > u(a) ? b : a));
   const entries = withData.filter(n => n.is_entry_point);

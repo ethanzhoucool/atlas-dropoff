@@ -165,7 +165,7 @@ export function renderReport(
     app: {
       name: opts.appName,
       id: atlas.app_id,
-      viewer: `https://app.revyl.ai/apps/${atlas.app_id}/atlas`,
+      viewer: `https://app.revyl.ai/apps/${encodeURIComponent(atlas.app_id)}/atlas`,
     },
     source: analytics.source,
     source_label: opts.sourceLabel ?? DEFAULT_SOURCE_LABELS[analytics.source],
@@ -656,7 +656,14 @@ function el(t, c, text) { var n = document.createElement(t); if (c) n.className 
    interpolation (the two goal/exit <b>…</b><br> labels). Never pass
    Atlas-derived or PostHog-derived strings here. */
 function elHtml(t, c, h) { var n = document.createElement(t); if (c) n.className = c; if (h != null) n.innerHTML = h; return n; }
-function fmt(n) { return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : '' + Math.round(n); }
+/* 999 · 1.2k · 999.9k · 1.5M. The thresholds sit at the rounding edges, so
+   999,950 reads "1M" rather than "1000k", and 999.5 reads "1k", not "1000". */
+function fmt(n) {
+  var a = Math.abs(n);
+  if (a >= 999950) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (a >= 999.5) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return '' + Math.round(n);
+}
 function pct(x) { var v = Math.round(x * 1000) / 10; return (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)) + '%'; }
 var NS = 'http://www.w3.org/2000/svg';
 function svgEl(t, a) { var n = document.createElementNS(NS, t); a = a || {}; for (var k in a) n.setAttribute(k, a[k]); return n; }
@@ -799,9 +806,12 @@ function renderEdges() {
       g.append(svgEl('path', { class: 'edge-path funnel ' + e.health, d: d, 'stroke-width': wgt }));
       var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
       var leak = e.health === 'leak';
+      /* users + lost = the previous step's cohort; when nobody reached it the
+         conversion is undefined, so show a dash rather than "0%" */
+      var fromNobody = (e.users || 0) + (e.lost || 0) === 0;
       var txt = leak
         ? '−' + Math.round(e.drop * 100) + '% · ' + fmt(e.lost)
-        : Math.round(e.conversion * 100) + '%';
+        : fromNobody ? '—' : Math.round(e.conversion * 100) + '%';
       var chipW = leak ? 124 : 56, chipH = 23;
       g.append(svgEl('rect', { x: mx - chipW / 2, y: my - chipH / 2, width: chipW, height: chipH, rx: 7,
         fill: '#0d0d13', stroke: leak ? 'rgba(247,109,109,.5)' : '#2c2939' }));
@@ -955,8 +965,12 @@ var drawer = $('#drawer'), scrim = $('#scrim'), dbody = $('#drawerBody');
 function markSelected(id) {
   nodesLayer.querySelectorAll('.node.selected').forEach(function (n) { n.classList.remove('selected'); });
   if (id) {
-    var n = nodesLayer.querySelector('.node[data-id="' + id + '"]');
-    if (n) n.classList.add('selected');
+    /* compare dataset ids rather than building a selector: an Atlas id with a
+       quote or backslash in it would make querySelector throw, and the drawer
+       would never open */
+    nodesLayer.querySelectorAll('.node').forEach(function (n) {
+      if (n.dataset.id === id) n.classList.add('selected');
+    });
   }
 }
 function openDrawer(id) {

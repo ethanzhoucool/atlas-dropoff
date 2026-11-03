@@ -509,3 +509,65 @@ test("vendor-reserved $ properties pass through; only the PostHog dialect is str
     await c.shutdown();
   }
 });
+
+/* ── misbehaving custom destinations never reach the host app ── */
+
+test("a destination whose classify() throws can't make flush() reject or block the others", async () => {
+  const { client } = loadFresh();
+  const { calls } = fakeFetch([{ status: 200 }]);
+  const brokenClassify = {
+    name: "in-house",
+    buildRequests: (batch) => [
+      { url: "https://collector.test/ingest", headers: {}, body: JSON.stringify(batch) },
+    ],
+    classify() {
+      throw new Error("bug in the app's classifier");
+    },
+  };
+  const c = newClient(client.AtlasClient, {
+    posthog: { apiKey: "phc_x", host: "https://posthog.test" },
+    destinations: [brokenClassify],
+  });
+  try {
+    c.trackScreen("/a");
+    // Must resolve: flush() is awaited by app code, and the interval /
+    // background flushes would otherwise be unhandled rejections.
+    await c.flush();
+    assert.ok(calls.some((call) => /posthog\.test\/batch/.test(call.url)), "PostHog still delivered");
+    assert.ok(calls.some((call) => /collector\.test/.test(call.url)), "the broken one was attempted");
+
+    // The broken destination's batch is dropped (like a buildRequests() bug),
+    // not retried forever; later events still flow.
+    const before = calls.length;
+    await c.flush();
+    assert.equal(calls.length, before, "nothing left to retry");
+    c.trackScreen("/b");
+    await c.flush();
+    assert.equal(calls.length, before + 2);
+  } finally {
+    await c.shutdown();
+  }
+});
+
+test("falsy entries in `destinations` are skipped instead of crashing init", async () => {
+  const { sdk, client } = loadFresh();
+  fakeFetch([{ status: 200 }]);
+  const seen = [];
+  // e.g. destinations={[__DEV__ ? null : warehouse, flag && other]} from JS.
+  const c = newClient(client.AtlasClient, {
+    destinations: [
+      null,
+      undefined,
+      false,
+      sdk.customDestination({ name: "warehouse", send: async (batch) => { seen.push(...batch); } }),
+    ],
+  });
+  try {
+    assert.deepEqual(c.destinationNames, ["warehouse"]);
+    c.trackScreen("/a");
+    await c.flush();
+    assert.equal(seen.length, 1);
+  } finally {
+    await c.shutdown();
+  }
+});

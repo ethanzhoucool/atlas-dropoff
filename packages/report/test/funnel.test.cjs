@@ -288,3 +288,119 @@ test('mapScreens warns when two Atlas nodes normalize to the same name key', asy
   assert.match(joined, /id-1/);
   assert.match(joined, /id-2/);
 });
+
+/* ── empty cohorts and zero-traffic screens ─────────────────── */
+
+test('mapped screens that all carry 0 users fail with a clear error, not a reduce() crash', async () => {
+  const atlas = makeAtlas([makeNode('A', { is_entry_point: true }), makeNode('B')], [makeEdge('A', 'B')]);
+  const counts = {
+    source: 'counts-file',
+    screens: { A: { users: 0, events: 3 }, B: { users: 0, events: 0 } },
+    transitions: [],
+  };
+  await assert.rejects(() => computeAll(atlas, counts), /every one has 0 distinct users/);
+
+  const { buildFunnelPath } = await funnelP;
+  const byId = new Map(atlas.nodes.map(n => [n.id, n]));
+  assert.deepEqual(buildFunnelPath(atlas, byId, new Map([['A', 0]]), new Map()), []);
+});
+
+test('screens_with_data counts only nodes that saw traffic', async () => {
+  const atlas = makeAtlas(
+    [makeNode('A', { is_entry_point: true }), makeNode('B'), makeNode('C')],
+    [makeEdge('A', 'B')],
+  );
+  const counts = {
+    source: 'counts-file',
+    screens: {
+      A: { users: 100, events: 100 },
+      B: { users: 40, events: 40 },
+      C: { users: 0, events: 0 }, // mapped, but no traffic in the window
+    },
+    transitions: [{ src: 'A', dst: 'B', users: 40 }],
+  };
+  const { analytics } = await computeAll(atlas, counts);
+  assert.equal(analytics.totals.screens_with_data, 2);
+  assert.equal(analytics.screens.C, undefined);
+});
+
+test('a step after an empty step reports no drop, not −100% of nobody', async () => {
+  const { mapScreens } = await mapP;
+  const { buildNodeTransitions, computeAnalytics } = await funnelP;
+  const atlas = makeAtlas(
+    [makeNode('A', { is_entry_point: true }), makeNode('B'), makeNode('C'), makeNode('D')],
+    [makeEdge('A', 'B'), makeEdge('B', 'C'), makeEdge('C', 'D')],
+  );
+  const counts = {
+    source: 'events-file',
+    screens: {
+      A: { users: 100, events: 100 },
+      B: { users: 30, events: 30 },
+      C: { users: 20, events: 20 },
+      D: { users: 10, events: 10 },
+    },
+    transitions: [
+      { src: 'A', dst: 'B', users: 30 },
+      { src: 'B', dst: 'C', users: 20 },
+      { src: 'C', dst: 'D', users: 10 },
+    ],
+  };
+  const mapping = mapScreens(counts, atlas, {}, () => {});
+  const transitions = buildNodeTransitions(counts, mapping);
+  // An exact funnel where nobody completed A→B in order (say, a short
+  // --funnel-window): steps 3 and 4 have an empty previous step.
+  const analytics = computeAnalytics(atlas, counts, mapping, transitions, {
+    dateRange: 'w',
+    disclaimer: 'd',
+    warn: () => {},
+    path: ['A', 'B', 'C', 'D'],
+    sequentialCohort: [100, 0, 0, 0],
+  });
+  const [, b, c, d] = analytics.funnel;
+  assert.equal(b.drop_pct, 1);
+  assert.equal(b.lost, 100);
+  for (const s of [c, d]) {
+    assert.equal(s.drop_pct, 0, `${s.screen_id}: no one could drop from an empty step`);
+    assert.equal(s.lost, 0);
+    assert.equal(s.conversion_from_prev, 0);
+    assert.match(s.note, /No users reached/);
+    assert.doesNotMatch(s.note, /−100%/);
+  }
+  // The real leak (A→B) is the biggest, with real users lost.
+  assert.equal(analytics.totals.biggest_leak.screen_id, 'A');
+  assert.equal(analytics.totals.biggest_leak.lost, 100);
+});
+
+test('an empty entry cohort cannot become a "biggest leak" of 0 users', async () => {
+  const { mapScreens } = await mapP;
+  const { buildNodeTransitions, computeAnalytics } = await funnelP;
+  const atlas = makeAtlas([makeNode('A', { is_entry_point: true }), makeNode('B')], [makeEdge('A', 'B')]);
+  const counts = {
+    source: 'counts-file',
+    screens: { A: { users: 10, events: 10 }, B: { users: 5, events: 5 } },
+    transitions: [{ src: 'A', dst: 'B', users: 5 }],
+  };
+  const mapping = mapScreens(counts, atlas, {}, () => {});
+  const analytics = computeAnalytics(atlas, counts, mapping, buildNodeTransitions(counts, mapping), {
+    dateRange: 'w',
+    disclaimer: 'd',
+    warn: () => {},
+    path: ['A', 'B'],
+    sequentialCohort: [0, 0],
+  });
+  assert.equal(analytics.funnel[1].drop_pct, 0);
+  assert.equal(analytics.totals.biggest_leak, null);
+  assert.equal(analytics.totals.conversion_pct, 0);
+});
+
+test('sequentialCohortProblem rejects a mis-sized or empty-entry cohort, accepts a real one', async () => {
+  const { sequentialCohortProblem } = await funnelP;
+  const path = ['A', 'B', 'C'];
+  assert.equal(sequentialCohortProblem([900, 400, 300], path, 1000), null);
+  // A real funnel can legitimately lose everyone after step 1.
+  assert.equal(sequentialCohortProblem([900, 0, 0], path, 1000), null);
+  assert.match(sequentialCohortProblem([900, 400], path, 1000), /2 step\(s\) for a 3-step path/);
+  assert.match(sequentialCohortProblem([0, 0, 0], path, 1000), /0 users at the entry step, though 1,000 users/);
+  // No viewers at the entry either: zero is consistent, not a broken query.
+  assert.equal(sequentialCohortProblem([0, 0, 0], path, 0), null);
+});
