@@ -345,7 +345,17 @@ export class AtlasClient {
           if (events.length === 0) return;
           this.pending.set(destination.name, []);
 
-          const { verdict, unsent } = await this.deliver(destination, events);
+          let outcome: { verdict: AtlasDeliveryVerdict; unsent: AtlasCapturedEvent[] };
+          try {
+            outcome = await this.deliver(destination, events);
+          } catch (error) {
+            // deliver() is written not to throw, so this is a safety net. A
+            // surprise from an app-supplied destination must not reject
+            // flush() or lose the events taken out of `pending` above.
+            this.warnDebug(`${destination.name}: delivery threw`, error);
+            outcome = { verdict: "retry", unsent: events };
+          }
+          const { verdict, unsent } = outcome;
           if (verdict === "retry") {
             this.requeue(destination.name, unsent);
             this.warnDebug(
@@ -459,7 +469,16 @@ export class AtlasClient {
     }
 
     const classify = destination.classify ?? defaultClassify;
-    const verdict = classify(response.status, body);
+    let verdict: AtlasDeliveryVerdict;
+    try {
+      verdict = classify(response.status, body);
+    } catch (error) {
+      // An app-supplied classifier bug. Escaping here would make flush()
+      // reject into app code and lose the batch. Drop it, the same way a
+      // buildRequests() bug drops: the same response would throw again.
+      this.warnDebug(`${destination.name}: classify() threw — dropping batch`, error);
+      return "drop";
+    }
     if (verdict !== "ok") {
       this.warnDebug(
         `${destination.name}: HTTP ${response.status} → ${verdict}`,
