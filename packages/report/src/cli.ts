@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { loadAtlas } from './atlas.js';
 import {
   buildFunnelPath, buildNodeTransitions, computeAnalytics, nodeUsersFromCounts,
+  sequentialCohortProblem,
 } from './funnel.js';
 import { mapScreens, printMappingReport } from './map.js';
 import { renderReport } from './render.js';
@@ -336,8 +337,14 @@ async function main(): Promise<void> {
       const windowSeconds = opts.funnelWindow ?? opts.days * 86400;
       try {
         log(`→ running the sequential funnel (${p.length} steps, ${opts.funnelWindow ? `${windowSeconds}s` : `${opts.days}d`} window)…`);
-        sequentialCohort = await source.fetchFunnel(stepKeys, windowSeconds);
-        funnelPath = p;
+        const cohort = await source.fetchFunnel(stepKeys, windowSeconds);
+        const problem = sequentialCohortProblem(cohort, p, users.get(p[0]) ?? 0);
+        if (problem) {
+          log(`! ignoring the sequential funnel: ${problem} — using the min-cohort estimate.`);
+        } else {
+          sequentialCohort = cohort;
+          funnelPath = p;
+        }
       } catch (err) {
         log(`! sequential funnel unavailable (${(err as Error).message}) — using the min-cohort estimate.`);
       }

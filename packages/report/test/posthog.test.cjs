@@ -37,6 +37,11 @@ test('funnelQuery builds a windowFunnel over N ordered steps, keys bound via val
   // Step keys are bound as {stepK} values, never spliced into SQL text.
   for (const k of [0, 1, 2]) assert.match(sql, new RegExp(`properties\\.screen IN \\{step${k}\\}`));
   assert.match(sql, /properties\.atlas_app_id = \{app_id\}/);
+  // PostHog's `timestamp` is DateTime64(6), which ClickHouse windowFunnel
+  // rejects (ILLEGAL_TYPE_OF_ARGUMENT). It must be converted to epoch seconds,
+  // so the window parameter keeps meaning seconds.
+  assert.match(sql, /windowFunnel\(86400\)\(\s*toUnixTimestamp\(timestamp\),/);
+  assert.doesNotMatch(sql, /windowFunnel\(\d+\)\(\s*timestamp\s*,/);
   assert.throws(() => funnelQuery(28, 86400, 1), /2\.\.32 steps/);
   assert.throws(() => funnelQuery(28, 86400, 33), /2\.\.32 steps/);
   assert.throws(() => funnelQuery(28, 0, 3), /window/);
