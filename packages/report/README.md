@@ -157,8 +157,8 @@ companion `atlas-analytics` SDK, whose contract is frozen):
 ```
 
 `screen` is the canonical route key (the join key to Atlas nodes); `prev_screen`
-attributes transitions. The three HogQL queries generated for the PostHog
-source are:
+attributes transitions. The HogQL queries generated for the PostHog source
+(three aggregates plus the sequential funnel) are:
 
 ```sql
 -- per screen
@@ -194,7 +194,27 @@ WHERE event = 'atlas_screen'
   AND properties.prev_screen != ''
   AND timestamp > now() - INTERVAL <days> DAY
 GROUP BY src
+
+-- sequential funnel over the discovered path (one condition per step)
+SELECT countIf(level >= 1) AS s1, countIf(level >= 2) AS s2, ...
+FROM (
+  SELECT person_id,
+    windowFunnel(<window seconds>)(
+      toUnixTimestamp(timestamp),
+      properties.screen IN {step0},
+      properties.screen IN {step1},
+      ...
+    ) AS level
+  FROM events
+  WHERE event = 'atlas_screen'
+    AND properties.atlas_app_id = {app_id}
+    AND timestamp > now() - INTERVAL <days> DAY
+  GROUP BY person_id
+)
 ```
+
+`windowFunnel` takes the timestamp as epoch seconds (`toUnixTimestamp`)
+because ClickHouse rejects PostHog's `DateTime64` `timestamp` column there.
 
 **The uniqueness metric is `count(DISTINCT person_id)`** (person-on-events),
 not `distinct_id`: one identified person spans multiple pre-identify device
