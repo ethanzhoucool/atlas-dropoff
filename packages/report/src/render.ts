@@ -806,9 +806,12 @@ function renderEdges() {
       g.append(svgEl('path', { class: 'edge-path funnel ' + e.health, d: d, 'stroke-width': wgt }));
       var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
       var leak = e.health === 'leak';
+      /* users + lost = the previous step's cohort; when nobody reached it the
+         conversion is undefined, so show a dash rather than "0%" */
+      var fromNobody = (e.users || 0) + (e.lost || 0) === 0;
       var txt = leak
         ? '−' + Math.round(e.drop * 100) + '% · ' + fmt(e.lost)
-        : Math.round(e.conversion * 100) + '%';
+        : fromNobody ? '—' : Math.round(e.conversion * 100) + '%';
       var chipW = leak ? 124 : 56, chipH = 23;
       g.append(svgEl('rect', { x: mx - chipW / 2, y: my - chipH / 2, width: chipW, height: chipH, rx: 7,
         fill: '#0d0d13', stroke: leak ? 'rgba(247,109,109,.5)' : '#2c2939' }));
