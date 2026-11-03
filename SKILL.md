@@ -144,7 +144,7 @@ If the app has auth, wire identity where login/logout happen: `identify(userId)`
 
 ## Step 4: Verify events fire
 
-Run the app (`npx expo start`, or the app's run command) and navigate through 3-4 screens. Check the vendor's live view, filtered to event `atlas_screen` — PostHog's Activity, Amplitude's User Look-Up / stream, Mixpanel's Events. Each event should carry `screen` (a collapsed route key like `/product/[id]`), `screen_title`, `prev_screen`, `atlas_app_id` (matching the UUID you wired), `session_id`, and `sdk`/`sdk_version`.
+Run the app (`npx expo start`, or the app's run command) and navigate through 3-4 screens. Check the vendor's live view, filtered to event `atlas_screen` — PostHog's Activity, Amplitude's User Look-Up / stream, Mixpanel's Events. Each event should carry `screen` (a collapsed route key like `/product/[id]`), `prev_screen`, `atlas_app_id` (matching the UUID you wired), `session_id`, and `sdk`/`sdk_version`. `screen_title` appears only on screens tracked manually with `trackScreen(name, { title })`; Expo Router and React Navigation auto-tracking don't set it, so its absence is not a wiring problem.
 
 Events land within a few seconds (the SDK batches; default flush is 5s). For instant confirmation during setup, pass `debug` to the provider and/or call `flush()`. Don't proceed until events are visibly landing. If nothing arrives: restart the dev server after editing `.env`, and confirm you used the **ingest** key, not the read credential.
 

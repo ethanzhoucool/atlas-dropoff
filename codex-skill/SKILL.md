@@ -72,7 +72,7 @@ function Navigation() {
 
 For plain React Native, call `trackScreen('<route-key>')` per screen with stable names. To collapse param'd keys, pass `normalizeScreen` to the provider. Where the app has auth, add `identify(userId)` on login and `reset()` on logout; `track(event, props)` covers custom events.
 
-**4. Verify events land.** Run the app (`npx expo start`) or ask the user to, navigate a few screens, and check the vendor's live view (PostHog Activity, Amplitude stream, Mixpanel Events) for `atlas_screen` events carrying `screen` (a collapsed route key), `screen_title`, `prev_screen`, `atlas_app_id` (the UUID), `session_id`, and `sdk`/`sdk_version`. Events arrive within a few seconds (batched; use `flush()`/`debug` for instant). If nothing arrives, restart the dev server so `.env` loads and confirm you used the ingest key, not the read credential. Don't continue until events appear.
+**4. Verify events land.** Run the app (`npx expo start`) or ask the user to, navigate a few screens, and check the vendor's live view (PostHog Activity, Amplitude stream, Mixpanel Events) for `atlas_screen` events carrying `screen` (a collapsed route key), `prev_screen`, `atlas_app_id` (the UUID), `session_id`, and `sdk`/`sdk_version`. (`screen_title` is only set by manual `trackScreen(name, { title })` calls; auto-tracking omits it, which is expected.) Events arrive within a few seconds (batched; use `flush()`/`debug` for instant). If nothing arrives, restart the dev server so `.env` loads and confirm you used the ingest key, not the read credential. Don't continue until events appear.
 
 **5. Build `screen-map.json`.** This is where you add the most value: you can see both the app's routes and the Atlas node names.
 

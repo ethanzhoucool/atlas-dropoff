@@ -124,7 +124,7 @@ One event, frozen schema, identical across vendors. Everything joins on `screen`
 | --- | --- |
 | event | `atlas_screen`, sent once per screen view |
 | `screen` | Canonical route key (a collapsed route pattern). The join key to Atlas nodes. |
-| `screen_title` | Human-readable screen title |
+| `screen_title` | Human-readable screen title, when one is passed to `trackScreen(name, { title })` (auto-tracking omits it) |
 | `prev_screen` | Route key of the previous screen (`null` on the first screen of a session) |
 | `atlas_app_id` | The Revyl Atlas app **id** (UUID) this event belongs to |
 | `session_id` | Session identifier |
