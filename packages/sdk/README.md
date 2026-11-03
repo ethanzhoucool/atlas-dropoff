@@ -19,6 +19,12 @@ funnel and paint drop-off onto your app's real screenshots from
 
 ## Install
 
+> **Not on npm yet.** Until it's published, the commands below 404. Install
+> from a packed tarball of this repo instead. See
+> [Install](https://github.com/ethanzhoucool/atlas-dropoff#install-copy-paste-no-npm-account)
+> in the root README. Don't do a path install of `packages/sdk`: it pulls a
+> duplicate React and crashes with "invalid hook call".
+
 ```sh
 npx expo install @revyl/atlas-analytics @react-native-async-storage/async-storage
 ```

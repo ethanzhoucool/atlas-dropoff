@@ -317,7 +317,11 @@ carry no data.
   splash), in which case the busiest screen overall is used so step 2 can never
   exceed step 1. Busiest overall is also used when Atlas marked no entry points.
 - **Path**: from each screen, follow the highest-volume observed transition to an
-  unvisited screen with data; stop at a terminal screen or a dead end.
+  unvisited screen with data, until a dead end (or 24 steps). Atlas's
+  `is_terminal` flag does not cut a path with real traffic short, since Atlas can
+  mark a screen terminal just because an exploration ended there. Without any
+  transition data, the path walks Atlas's own edges (primary first) and does stop
+  at a terminal screen.
 - **Conversion (end-to-end and per step)**: driven by a monotone funnel cohort.
   - Sources with per-user data run a real **sequential funnel** over the
     discovered path: distinct users who completed the first *k* steps in order,
